@@ -42,6 +42,95 @@
     margin: 0 auto;
     padding-bottom: 100px;
   }
+
+  /* ── LOCK SCREEN ── */
+  #lockScreen {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    min-height: 100vh;
+    padding: 32px 24px;
+    gap: 0;
+  }
+  .lock-blob {
+    width: 72px; height: 72px;
+    background: linear-gradient(135deg, #0E7490, #06B6D4);
+    border-radius: 24px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 36px; margin-bottom: 20px;
+    box-shadow: 0 8px 32px rgba(14,116,144,0.22);
+  }
+  .lock-title {
+    font-size: 26px; font-weight: 800; color: var(--text);
+    letter-spacing: -0.5px; margin-bottom: 6px;
+  }
+  .lock-title span { color: var(--accent-dark); }
+  .lock-sub {
+    font-size: 14px; color: var(--text-muted); font-weight: 600;
+    margin-bottom: 32px; text-align: center; line-height: 1.5;
+  }
+  .lock-card {
+    background: var(--card);
+    border-radius: var(--r);
+    box-shadow: var(--shadow);
+    border: 1.5px solid var(--border);
+    padding: 28px 24px;
+    width: 100%; max-width: 360px;
+  }
+  .lock-label {
+    font-size: 12px; font-weight: 800; color: var(--text-muted);
+    letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 10px;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .lock-input-wrap { position: relative; margin-bottom: 18px; }
+  .lock-input {
+    width: 100%; padding: 14px 48px 14px 16px;
+    border: 2px solid var(--border); border-radius: var(--r-sm);
+    font-family: 'Nunito', sans-serif; font-size: 16px; font-weight: 700;
+    outline: none; color: var(--text); background: #F0FAFB;
+    transition: border-color 0.2s, background 0.2s;
+    letter-spacing: 0.12em;
+  }
+  .lock-input:focus { border-color: var(--accent); background: white; }
+  .lock-input.error { border-color: #F87171; background: #FFF5F5; animation: shake 0.35s ease; }
+  @keyframes shake {
+    0%,100%{transform:translateX(0)}
+    20%{transform:translateX(-7px)}
+    40%{transform:translateX(7px)}
+    60%{transform:translateX(-5px)}
+    80%{transform:translateX(5px)}
+  }
+  .toggle-pw {
+    position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+    background: none; border: none; cursor: pointer;
+    font-size: 18px; color: var(--text-muted); padding: 4px;
+    transition: color 0.18s;
+  }
+  .toggle-pw:hover { color: var(--accent); }
+  .lock-error {
+    font-size: 13px; font-weight: 700; color: #EF4444;
+    margin-top: -10px; margin-bottom: 14px; display: none;
+    align-items: center; gap: 6px;
+  }
+  .lock-error.show { display: flex; }
+  .lock-btn {
+    width: 100%; padding: 15px; border-radius: var(--r-sm); border: none;
+    background: linear-gradient(135deg, #0E7490, #164E63); color: white;
+    font-family: 'Nunito', sans-serif; font-size: 16px; font-weight: 800;
+    cursor: pointer; transition: opacity 0.15s, transform 0.15s;
+    letter-spacing: 0.02em;
+  }
+  .lock-btn:active { opacity: 0.85; transform: scale(0.98); }
+  .lock-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .lock-footer {
+    margin-top: 28px; font-size: 12px; color: var(--text-muted);
+    font-weight: 600; text-align: center;
+  }
+
+  /* ── APP (hidden until unlocked) ── */
+  #appWrapper { display: none; }
+
   .header {
     padding: 48px 24px 8px;
     position: sticky;
@@ -61,9 +150,17 @@
   .header h1 span { color: var(--accent-dark); }
   .header-sub { font-size: 13px; color: var(--text-muted); font-weight: 500; padding-left: 50px; margin-bottom: 16px; }
 
+  .lock-icon-btn {
+    width: 34px; height: 34px; border: none; background: none; cursor: pointer;
+    border-radius: 10px; color: var(--text-muted); display: flex; align-items: center;
+    justify-content: center; font-size: 18px; transition: all 0.18s; flex-shrink: 0;
+    margin-left: auto;
+  }
+  .lock-icon-btn:hover { background: var(--accent-light); color: var(--accent); }
+
   .sync-dot {
     width: 8px; height: 8px; border-radius: 50%;
-    background: var(--mint); margin-left: auto; flex-shrink: 0;
+    background: var(--mint); flex-shrink: 0;
     transition: background 0.3s;
   }
   .sync-dot.syncing { background: var(--yellow); animation: pulse 0.8s infinite; }
@@ -223,21 +320,50 @@
 
   .all-done-banner { display: none; align-items: center; justify-content: center; gap: 8px; padding: 10px 18px; background: var(--mint-light); border-top: 1.5px solid #A7F3D0; font-size: 13px; font-weight: 800; color: #065F46; }
   .all-done-banner.show { display: flex; }
+
+  /* unlock animation */
+  @keyframes unlockFade { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+  #appWrapper { animation: unlockFade 0.4s ease; }
 </style>
 </head>
 <body>
 
-<div class="header">
-  <div class="header-top">
-    <div class="logo-blob">✨</div>
-    <h1>Check<span>lister</span></h1>
-    <div class="sync-dot" id="syncDot" title="Sync status"></div>
+<!-- ══ LOCK SCREEN ══════════════════════════════════════════════════ -->
+<div id="lockScreen">
+  <div class="lock-blob">✨</div>
+  <h1 class="lock-title">Check<span>lister</span></h1>
+  <p class="lock-sub">Enter your password to access<br>your lists 🔒</p>
+
+  <div class="lock-card">
+    <div class="lock-label">🔑 Password</div>
+    <div class="lock-input-wrap">
+      <input class="lock-input" type="password" id="pwInput"
+        placeholder="Enter password…" maxlength="64" autocomplete="current-password"
+        onkeydown="if(event.key==='Enter')tryUnlock()">
+      <button class="toggle-pw" id="togglePwBtn" onclick="togglePwVisibility()" title="Show/hide password">👁</button>
+    </div>
+    <div class="lock-error" id="lockError">❌ Wrong password, try again!</div>
+    <button class="lock-btn" id="unlockBtn" onclick="tryUnlock()">Unlock 🔓</button>
   </div>
-  <p class="header-sub" id="subtitle">Connecting…</p>
+
+  <p class="lock-footer">Your lists are private & synced to the cloud ☁️</p>
 </div>
 
-<div class="tabs-scroll" id="listTabs"></div>
-<div class="content" id="mainContent"></div>
+<!-- ══ APP (shown after unlock) ════════════════════════════════════ -->
+<div id="appWrapper">
+  <div class="header">
+    <div class="header-top">
+      <div class="logo-blob">✨</div>
+      <h1>Check<span>lister</span></h1>
+      <div class="sync-dot" id="syncDot" title="Sync status"></div>
+      <button class="lock-icon-btn" onclick="lockApp()" title="Lock app">🔒</button>
+    </div>
+    <p class="header-sub" id="subtitle">Connecting…</p>
+  </div>
+
+  <div class="tabs-scroll" id="listTabs"></div>
+  <div class="content" id="mainContent"></div>
+</div>
 
 <div class="overlay" id="overlay">
   <div class="modal">
@@ -252,21 +378,84 @@
 </div>
 
 <script>
+// ─── PASSWORD ─────────────────────────────────────────────────────────
+// ✏️  Change this to your own password:
+const PASSWORD = '1234';
+// ──────────────────────────────────────────────────────────────────────
+
+const SESSION_KEY = 'checklister_unlocked';
+
+function tryUnlock() {
+  const val = document.getElementById('pwInput').value;
+  const err = document.getElementById('lockError');
+  const inp = document.getElementById('pwInput');
+
+  if (val === PASSWORD) {
+    sessionStorage.setItem(SESSION_KEY, '1');
+    document.getElementById('lockScreen').style.display = 'none';
+    document.getElementById('appWrapper').style.display = 'block';
+    err.classList.remove('show');
+    initApp();
+  } else {
+    inp.classList.remove('error');
+    void inp.offsetWidth; // reflow to restart animation
+    inp.classList.add('error');
+    err.classList.add('show');
+    inp.value = '';
+    inp.focus();
+  }
+}
+
+function lockApp() {
+  sessionStorage.removeItem(SESSION_KEY);
+  document.getElementById('appWrapper').style.display = 'none';
+  document.getElementById('lockScreen').style.display = 'flex';
+  document.getElementById('pwInput').value = '';
+  document.getElementById('lockError').classList.remove('show');
+}
+
+function togglePwVisibility() {
+  const inp = document.getElementById('pwInput');
+  const btn = document.getElementById('togglePwBtn');
+  if (inp.type === 'password') { inp.type = 'text'; btn.textContent = '🙈'; }
+  else { inp.type = 'password'; btn.textContent = '👁'; }
+}
+
+// Auto-unlock if already authenticated this session
+if (sessionStorage.getItem(SESSION_KEY) === '1') {
+  document.getElementById('lockScreen').style.display = 'none';
+  document.getElementById('appWrapper').style.display = 'block';
+}
+
 // ─── CONFIG ───────────────────────────────────────────────────────────
 const SUPABASE_URL = 'https://bjdhtxtwreklnnseodjb.supabase.co';
 const SUPABASE_KEY = 'sb_publishable_Ah_nnrgqnY5dVFJmpEtnZA_YawMCkzD';
 // ──────────────────────────────────────────────────────────────────────
 
-// FIX: use supabaseClient consistently (was bare `supabase` in saveToDB)
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 let lists = [];
 let activeId = null;
 let saveTimer = null;
+let appInited = false;
+
+function initApp() {
+  if (appInited) return;
+  appInited = true;
+  document.getElementById('mainContent').innerHTML = `<div class="loading-screen">
+    <div class="loading-spinner"></div>
+    <p>Loading your lists…</p>
+  </div>`;
+  loadFromDB();
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(console.warn);
+  }
+}
 
 // ─── SYNC ─────────────────────────────────────────────────────────────
 function setSyncState(state) {
   const dot = document.getElementById('syncDot');
+  if (!dot) return;
   dot.className = 'sync-dot' + (state === 'syncing' ? ' syncing' : state === 'error' ? ' error' : '');
   dot.title = state === 'ok' ? 'Saved to cloud ✓' : state === 'syncing' ? 'Saving…' : 'Sync error – saved locally';
 }
@@ -281,7 +470,6 @@ async function loadFromDB() {
       .single();
 
     if (error) {
-      // "no rows" just means first time — start fresh
       if (error.code === 'PGRST116') {
         lists = [];
         activeId = null;
@@ -303,12 +491,9 @@ async function loadFromDB() {
 }
 
 async function saveToDB() {
-  // always save locally as backup
   localStorage.setItem('checklister_v2', JSON.stringify(lists));
-
   setSyncState('syncing');
   try {
-    // FIX: was `supabase` (undefined) — now correctly uses `supabaseClient`
     const { error } = await supabaseClient
       .from('lists')
       .upsert({ id: 'main', data: lists, updated_at: new Date().toISOString() });
@@ -326,7 +511,6 @@ function scheduleSave() {
 }
 
 function loadFallback() {
-  // FIX: no seedData — start empty
   lists = JSON.parse(localStorage.getItem('checklister_v2') || '[]');
   activeId = lists[0]?.id || null;
 }
@@ -340,6 +524,7 @@ function render() {
   renderTabs();
   renderContent();
   const sub = document.getElementById('subtitle');
+  if (!sub) return;
   if (!lists.length) { sub.textContent = 'Start by creating a list 💫'; return; }
   const total = lists.reduce((a,l) => a + l.items.length, 0);
   const done  = lists.reduce((a,l) => a + l.items.filter(i=>i.done).length, 0);
@@ -348,6 +533,7 @@ function render() {
 
 function renderTabs() {
   const el = document.getElementById('listTabs');
+  if (!el) return;
   let h = '';
   lists.forEach(l => {
     const a = l.id === activeId ? 'active' : '';
@@ -362,6 +548,7 @@ function renderTabs() {
 
 function renderContent() {
   const el = document.getElementById('mainContent');
+  if (!el) return;
 
   if (!lists.length) {
     el.innerHTML = `<div class="no-lists">
@@ -501,17 +688,12 @@ function confirmModal() {
 document.getElementById('overlay').addEventListener('click', function(e){ if(e.target===this) closeModal(); });
 document.getElementById('modalInput').addEventListener('keydown', e=>{ if(e.key==='Enter') confirmModal(); });
 
-// ─── BOOT ─────────────────────────────────────────────────────────────
-document.getElementById('mainContent').innerHTML = `<div class="loading-screen">
-  <div class="loading-spinner"></div>
-  <p>Loading your lists…</p>
-</div>`;
-
-loadFromDB();
-
-// ─── PWA SERVICE WORKER ───────────────────────────────────────────────
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js').catch(console.warn);
+// Auto-init if session already unlocked
+if (sessionStorage.getItem(SESSION_KEY) === '1') {
+  initApp();
+} else {
+  // Focus password input
+  setTimeout(() => document.getElementById('pwInput').focus(), 100);
 }
 </script>
 </body>
