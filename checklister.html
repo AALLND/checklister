@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Checklister ✨</title>
+<link rel="manifest" href="manifest.json">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Checklister">
+<meta name="theme-color" content="#0E7490">
+<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --bg: #F0FAFB;
+    --card: #FFFFFF;
+    --accent: #0E7490;
+    --accent-light: #ECFEFF;
+    --accent-dark: #164E63;
+    --pink: #06B6D4;
+    --pink-light: #ECFEFF;
+    --mint: #34D399;
+    --mint-light: #ECFDF5;
+    --yellow: #FCD34D;
+    --text: #0C2D38;
+    --text-muted: #5B9BAA;
+    --border: #C8EEF4;
+    --shadow: 0 4px 24px rgba(14,116,144,0.13);
+    --r: 20px;
+    --r-sm: 12px;
+    --r-pill: 100px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+  body {
+    font-family: 'Nunito', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    max-width: 480px;
+    margin: 0 auto;
+    padding-bottom: 100px;
+  }
+  .header {
+    padding: 48px 24px 8px;
+    position: sticky;
+    top: 0;
+    background: var(--bg);
+    z-index: 10;
+  }
+  .header-top { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
+  .logo-blob {
+    width: 40px; height: 40px;
+    background: linear-gradient(135deg, #0E7490, #06B6D4);
+    border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; flex-shrink: 0;
+  }
+  .header h1 { font-size: 24px; font-weight: 800; letter-spacing: -0.5px; color: var(--text); }
+  .header h1 span { color: var(--accent-dark); }
+  .header-sub { font-size: 13px; color: var(--text-muted); font-weight: 500; padding-left: 50px; margin-bottom: 16px; }
+
+  .sync-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--mint); margin-left: auto; flex-shrink: 0;
+    transition: background 0.3s;
+  }
+  .sync-dot.syncing { background: var(--yellow); animation: pulse 0.8s infinite; }
+  .sync-dot.error   { background: #F87171; }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  .tabs-scroll { display: flex; gap: 8px; padding: 0 24px 18px; overflow-x: auto; scrollbar-width: none; }
+  .tabs-scroll::-webkit-scrollbar { display: none; }
+  .tab {
+    display: flex; align-items: center; gap: 7px;
+    padding: 9px 15px; border-radius: var(--r-pill);
+    border: 2px solid var(--border); background: var(--card);
+    cursor: pointer; white-space: nowrap;
+    font-family: 'Nunito', sans-serif; font-size: 13px; font-weight: 700;
+    color: var(--text-muted); transition: all 0.2s; user-select: none;
+  }
+  .tab.active { border-color: var(--accent); background: var(--accent-light); color: var(--accent-dark); }
+  .tab-badge {
+    background: var(--border); color: var(--text-muted);
+    border-radius: var(--r-pill); padding: 1px 7px;
+    font-size: 11px; font-weight: 800; line-height: 1.6;
+  }
+  .tab.active .tab-badge { background: var(--accent); color: #fff; }
+  .new-tab-btn {
+    display: flex; align-items: center; gap: 6px;
+    padding: 9px 15px; border-radius: var(--r-pill);
+    border: 2px dashed #A8D8E0; background: transparent;
+    cursor: pointer; white-space: nowrap;
+    font-family: 'Nunito', sans-serif; font-size: 13px; font-weight: 700;
+    color: #7BB8C4; transition: all 0.18s;
+  }
+  .new-tab-btn:hover { border-color: var(--accent); color: var(--accent-dark); }
+
+  .content { padding: 0 16px; }
+  .list-card {
+    background: var(--card); border-radius: var(--r);
+    box-shadow: var(--shadow); border: 1.5px solid var(--border);
+    overflow: hidden; animation: popIn 0.28s cubic-bezier(0.34,1.56,0.64,1);
+  }
+  @keyframes popIn { from{opacity:0;transform:scale(0.96) translateY(8px)} to{opacity:1;transform:scale(1) translateY(0)} }
+
+  .card-header { padding: 18px 18px 14px; display: flex; align-items: center; gap: 10px; border-bottom: 1.5px solid var(--border); }
+  .card-title-input {
+    flex: 1; font-family: 'Nunito', sans-serif; font-size: 17px; font-weight: 800;
+    border: none; outline: none; background: transparent; color: var(--text); min-width: 0;
+  }
+  .card-title-input:focus { color: var(--accent-dark); }
+
+  .progress-wrap { padding: 10px 18px; display: flex; align-items: center; gap: 10px; border-bottom: 1.5px solid var(--border); }
+  .progress-track { flex: 1; height: 8px; background: #E0F4F8; border-radius: 99px; overflow: hidden; }
+  .progress-fill { height: 100%; background: linear-gradient(90deg, #0E7490, #06B6D4); border-radius: 99px; transition: width 0.5s cubic-bezier(0.34,1.56,0.64,1); }
+  .progress-fill.full { background: linear-gradient(90deg, #34D399, #059669); }
+  .progress-label { font-size: 12px; font-weight: 800; color: var(--text-muted); min-width: 32px; text-align: right; }
+
+  .items-list { list-style: none; }
+  .item-row {
+    display: flex; align-items: center; gap: 11px;
+    padding: 11px 18px; border-bottom: 1.5px solid #F0FAFB;
+    transition: background 0.15s; animation: fadeSlide 0.22s ease;
+  }
+  @keyframes fadeSlide { from{opacity:0;transform:translateX(-6px)} to{opacity:1;transform:translateX(0)} }
+  .item-row:last-child { border-bottom: none; }
+
+  .cb-wrap { width: 26px; height: 26px; flex-shrink: 0; cursor: pointer; }
+  .cb-wrap input { display: none; }
+  .cb-box {
+    width: 26px; height: 26px; border: 2.5px solid #A8D8E0; border-radius: 9px;
+    display: flex; align-items: center; justify-content: center;
+    background: #F0FAFB; transition: all 0.2s cubic-bezier(0.34,1.56,0.64,1); font-size: 14px;
+  }
+  .cb-wrap input:checked + .cb-box { background: linear-gradient(135deg,#34D399,#059669); border-color:#34D399; transform:scale(1.08); }
+  .cb-box .tick { display: none; }
+  .cb-wrap input:checked + .cb-box .tick { display: block; }
+
+  .item-text-wrap { flex: 1; min-width: 0; }
+  .item-text {
+    font-family: 'Nunito', sans-serif; font-size: 15px; font-weight: 600;
+    border: none; outline: none; background: transparent; width: 100%;
+    color: var(--text); transition: all 0.2s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .item-text:focus { white-space: normal; overflow: visible; color: var(--accent-dark); }
+  .item-text.done { text-decoration: line-through; color: #7BB8C4; }
+
+  .item-del {
+    width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+    border: none; background: none; cursor: pointer; border-radius: 9px;
+    color: #A8D8E0; font-size: 16px; transition: all 0.18s; flex-shrink: 0;
+  }
+  .item-del:hover { background: var(--pink-light); color: var(--pink); }
+
+  .add-row { padding: 12px 18px; display: flex; align-items: center; gap: 10px; border-top: 1.5px solid var(--border); }
+  .add-row-icon { font-size: 18px; flex-shrink: 0; }
+  .add-input { flex: 1; font-family: 'Nunito', sans-serif; font-size: 14px; font-weight: 600; border: none; outline: none; background: transparent; color: var(--text); }
+  .add-input::placeholder { color: #7BB8C4; }
+  .add-btn {
+    width: 34px; height: 34px; border-radius: 11px;
+    background: linear-gradient(135deg, #0E7490, #164E63);
+    border: none; cursor: pointer; display: flex; align-items: center; justify-content: center;
+    flex-shrink: 0; transition: transform 0.15s, opacity 0.15s; font-size: 18px; color: white; font-weight: 700;
+  }
+  .add-btn:active { transform: scale(0.88); }
+
+  .del-list-btn {
+    width: 32px; height: 32px; border: none; background: none; cursor: pointer;
+    border-radius: 10px; color: #A8D8E0; display: flex; align-items: center; justify-content: center;
+    font-size: 17px; transition: all 0.18s; flex-shrink: 0;
+  }
+  .del-list-btn:hover { background: var(--pink-light); color: var(--pink); }
+
+  .empty-state { text-align: center; padding: 36px 20px; }
+  .empty-state .e-icon { font-size: 38px; margin-bottom: 8px; }
+  .empty-state p { font-size: 14px; color: var(--text-muted); font-weight: 600; }
+
+  .no-lists { text-align: center; padding: 64px 30px 40px; }
+  .no-lists .nl-icon { font-size: 56px; margin-bottom: 14px; }
+  .no-lists h2 { font-size: 20px; font-weight: 800; color: var(--text); margin-bottom: 8px; }
+  .no-lists p { font-size: 14px; color: var(--text-muted); font-weight: 600; line-height: 1.6; }
+
+  .loading-screen {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 60vh; gap: 16px;
+  }
+  .loading-spinner {
+    width: 40px; height: 40px;
+    border: 3px solid var(--border); border-top-color: var(--accent);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .loading-screen p { font-size: 14px; color: var(--text-muted); font-weight: 600; }
+
+  .overlay { display: none; position: fixed; inset: 0; background: rgba(45,27,78,0.3); backdrop-filter: blur(4px); z-index: 100; align-items: flex-end; justify-content: center; }
+  .overlay.open { display: flex; }
+  .modal { background: var(--card); border-radius: 28px 28px 0 0; padding: 10px 24px 44px; width: 100%; max-width: 480px; animation: sheetUp 0.3s cubic-bezier(0.34,1.2,0.64,1); }
+  @keyframes sheetUp { from{transform:translateY(110%)} to{transform:translateY(0)} }
+  .modal-handle { width: 36px; height: 4px; background: var(--border); border-radius: 99px; margin: 12px auto 22px; }
+  .modal h3 { font-size: 19px; font-weight: 800; color: var(--text); margin-bottom: 16px; }
+  .modal-input {
+    width: 100%; padding: 14px 16px; border: 2px solid var(--border); border-radius: var(--r-sm);
+    font-family: 'Nunito', sans-serif; font-size: 15px; font-weight: 600;
+    outline: none; color: var(--text); background: #F0FAFB; transition: border-color 0.2s; margin-bottom: 14px;
+  }
+  .modal-input:focus { border-color: var(--accent); background: white; }
+  .modal-btns { display: flex; gap: 10px; }
+  .btn-cancel {
+    flex: 1; padding: 14px; border-radius: var(--r-sm); border: 2px solid var(--border);
+    background: white; font-family: 'Nunito', sans-serif; font-size: 15px; font-weight: 700;
+    cursor: pointer; color: var(--text-muted); transition: background 0.15s;
+  }
+  .btn-cancel:hover { background: #F0FAFB; }
+  .btn-create {
+    flex: 1; padding: 14px; border-radius: var(--r-sm); border: none;
+    background: linear-gradient(135deg, #0E7490, #164E63); color: white;
+    font-family: 'Nunito', sans-serif; font-size: 15px; font-weight: 800;
+    cursor: pointer; transition: opacity 0.15s, transform 0.15s;
+  }
+  .btn-create:active { opacity: 0.85; transform: scale(0.98); }
+
+  .all-done-banner { display: none; align-items: center; justify-content: center; gap: 8px; padding: 10px 18px; background: var(--mint-light); border-top: 1.5px solid #A7F3D0; font-size: 13px; font-weight: 800; color: #065F46; }
+  .all-done-banner.show { display: flex; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="header-top">
+    <div class="logo-blob">✨</div>
+    <h1>Check<span>lister</span></h1>
+    <div class="sync-dot" id="syncDot" title="Sync status"></div>
+  </div>
+  <p class="header-sub" id="subtitle">Connecting…</p>
+</div>
+
+<div class="tabs-scroll" id="listTabs"></div>
+<div class="content" id="mainContent"></div>
+
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <div class="modal-handle"></div>
+    <h3 id="modalTitle">✨ New List</h3>
+    <input class="modal-input" type="text" id="modalInput" placeholder="e.g. 🛒 Shopping, 📄 Documents…" maxlength="40" autocomplete="off">
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-create" id="modalConfirm" onclick="confirmModal()">Create ✨</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── CONFIG ───────────────────────────────────────────────────────────
+const SUPABASE_URL = 'https://bjdhtxtwreklnnseodjb.supabase.co';
+const SUPABASE_KEY = 'sb_publishable_Ah_nnrgqnY5dVFJmpEtnZA_YawMCkzD';
+// ──────────────────────────────────────────────────────────────────────
+
+// FIX: use supabaseClient consistently (was bare `supabase` in saveToDB)
+const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let lists = [];
+let activeId = null;
+let saveTimer = null;
+
+// ─── SYNC ─────────────────────────────────────────────────────────────
+function setSyncState(state) {
+  const dot = document.getElementById('syncDot');
+  dot.className = 'sync-dot' + (state === 'syncing' ? ' syncing' : state === 'error' ? ' error' : '');
+  dot.title = state === 'ok' ? 'Saved to cloud ✓' : state === 'syncing' ? 'Saving…' : 'Sync error – saved locally';
+}
+
+async function loadFromDB() {
+  try {
+    setSyncState('syncing');
+    const { data, error } = await supabaseClient
+      .from('lists')
+      .select('data')
+      .eq('id', 'main')
+      .single();
+
+    if (error) {
+      // "no rows" just means first time — start fresh
+      if (error.code === 'PGRST116') {
+        lists = [];
+        activeId = null;
+        setSyncState('ok');
+      } else {
+        throw error;
+      }
+    } else {
+      lists = data.data || [];
+      activeId = lists[0]?.id || null;
+      setSyncState('ok');
+    }
+  } catch(e) {
+    console.warn('DB load failed, using localStorage:', e);
+    loadFallback();
+    setSyncState('error');
+  }
+  render();
+}
+
+async function saveToDB() {
+  // always save locally as backup
+  localStorage.setItem('checklister_v2', JSON.stringify(lists));
+
+  setSyncState('syncing');
+  try {
+    // FIX: was `supabase` (undefined) — now correctly uses `supabaseClient`
+    const { error } = await supabaseClient
+      .from('lists')
+      .upsert({ id: 'main', data: lists, updated_at: new Date().toISOString() });
+    if (error) throw error;
+    setSyncState('ok');
+  } catch(e) {
+    console.warn('DB save failed:', e);
+    setSyncState('error');
+  }
+}
+
+function scheduleSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveToDB, 600);
+}
+
+function loadFallback() {
+  // FIX: no seedData — start empty
+  lists = JSON.parse(localStorage.getItem('checklister_v2') || '[]');
+  activeId = lists[0]?.id || null;
+}
+
+// ─── UTILS ────────────────────────────────────────────────────────────
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,5); }
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+
+// ─── RENDER ───────────────────────────────────────────────────────────
+function render() {
+  renderTabs();
+  renderContent();
+  const sub = document.getElementById('subtitle');
+  if (!lists.length) { sub.textContent = 'Start by creating a list 💫'; return; }
+  const total = lists.reduce((a,l) => a + l.items.length, 0);
+  const done  = lists.reduce((a,l) => a + l.items.filter(i=>i.done).length, 0);
+  sub.textContent = total ? `${done} of ${total} done ${done===total && total>0 ? '🎉':'⭐'}` : 'Add some items!';
+}
+
+function renderTabs() {
+  const el = document.getElementById('listTabs');
+  let h = '';
+  lists.forEach(l => {
+    const a = l.id === activeId ? 'active' : '';
+    h += `<div class="tab ${a}" onclick="switchList('${l.id}')">
+      ${escHtml(l.name)}
+      <span class="tab-badge">${l.items.length}</span>
+    </div>`;
+  });
+  h += `<button class="new-tab-btn" onclick="openModal()">＋ New List</button>`;
+  el.innerHTML = h;
+}
+
+function renderContent() {
+  const el = document.getElementById('mainContent');
+
+  if (!lists.length) {
+    el.innerHTML = `<div class="no-lists">
+      <div class="nl-icon">🌸</div>
+      <h2>No lists yet!</h2>
+      <p>Tap <strong>＋ New List</strong> above<br>to create your first checklist~</p>
+    </div>`; return;
+  }
+
+  el.innerHTML = getListHTML();
+}
+
+function getListHTML() {
+  if (!lists.length) return '';
+  const list = lists.find(l => l.id === activeId);
+  if (!list) return '';
+
+  const done  = list.items.filter(i=>i.done).length;
+  const total = list.items.length;
+  const pct   = total ? Math.round(done/total*100) : 0;
+  const allDone = total > 0 && done === total;
+
+  let itemsHtml = '';
+  list.items.forEach(item => {
+    const dc = item.done ? 'done' : '';
+    itemsHtml += `<li class="item-row">
+      <label class="cb-wrap">
+        <input type="checkbox" ${item.done?'checked':''} onchange="toggleItem('${list.id}','${item.id}',this.checked)">
+        <div class="cb-box"><span class="tick">✓</span></div>
+      </label>
+      <div class="item-text-wrap">
+        <input class="item-text ${dc}" type="text" value="${escHtml(item.text)}"
+          onblur="editItem('${list.id}','${item.id}',this.value)"
+          onkeydown="if(event.key==='Enter')this.blur()">
+      </div>
+      <button class="item-del" onclick="deleteItem('${list.id}','${item.id}')">✕</button>
+    </li>`;
+  });
+
+  if (!list.items.length) {
+    itemsHtml = `<div class="empty-state">
+      <div class="e-icon">🌟</div>
+      <p>Nothing here yet~<br>Add your first item below!</p>
+    </div>`;
+  }
+
+  return `<div class="list-card">
+    <div class="card-header">
+      <input class="card-title-input" type="text" value="${escHtml(list.name)}"
+        onblur="renameList('${list.id}',this.value)"
+        onkeydown="if(event.key==='Enter')this.blur()">
+      <button class="del-list-btn" onclick="deleteList('${list.id}')" title="Delete list">🗑</button>
+    </div>
+    ${total > 0 ? `<div class="progress-wrap">
+      <div class="progress-track">
+        <div class="progress-fill ${allDone?'full':''}" style="width:${pct}%"></div>
+      </div>
+      <span class="progress-label">${pct}%</span>
+    </div>` : ''}
+    <ul class="items-list">${itemsHtml}</ul>
+    <div class="all-done-banner ${allDone?'show':''}">🎊 All done! You're amazing!</div>
+    <div class="add-row">
+      <span class="add-row-icon">🌸</span>
+      <input class="add-input" id="newItemInput" type="text" placeholder="Add something…" maxlength="100"
+        onkeydown="if(event.key==='Enter')addItem('${list.id}')">
+      <button class="add-btn" onclick="addItem('${list.id}')">＋</button>
+    </div>
+  </div>`;
+}
+
+// ─── ACTIONS ──────────────────────────────────────────────────────────
+function switchList(id) { activeId = id; render(); }
+
+function addItem(listId) {
+  const inp = document.getElementById('newItemInput');
+  const text = inp.value.trim();
+  if (!text) return;
+  lists.find(l=>l.id===listId).items.push({id:uid(), text, done:false});
+  scheduleSave();
+  render();
+  setTimeout(()=>{ const n=document.getElementById('newItemInput'); if(n) n.focus(); }, 50);
+}
+
+function toggleItem(listId, itemId, checked) {
+  lists.find(l=>l.id===listId).items.find(i=>i.id===itemId).done = checked;
+  scheduleSave();
+  render();
+}
+
+function editItem(listId, itemId, value) {
+  const text = value.trim();
+  if (!text) return;
+  lists.find(l=>l.id===listId).items.find(i=>i.id===itemId).text = text;
+  scheduleSave();
+}
+
+function deleteItem(listId, itemId) {
+  const list = lists.find(l=>l.id===listId);
+  list.items = list.items.filter(i=>i.id!==itemId);
+  scheduleSave();
+  render();
+}
+
+function renameList(listId, value) {
+  const name = value.trim();
+  if (!name) return;
+  lists.find(l=>l.id===listId).name = name;
+  scheduleSave();
+  render();
+}
+
+function deleteList(listId) {
+  if (!confirm('Delete this list? 🥺')) return;
+  lists = lists.filter(l=>l.id!==listId);
+  activeId = lists[0]?.id || null;
+  scheduleSave();
+  render();
+}
+
+function openModal() {
+  document.getElementById('modalInput').value = '';
+  document.getElementById('overlay').classList.add('open');
+  setTimeout(()=>document.getElementById('modalInput').focus(), 300);
+}
+function closeModal() { document.getElementById('overlay').classList.remove('open'); }
+function confirmModal() {
+  const name = document.getElementById('modalInput').value.trim();
+  if (!name) return;
+  const l = {id:uid(), name, items:[]};
+  lists.push(l);
+  activeId = l.id;
+  scheduleSave();
+  render();
+  closeModal();
+}
+
+document.getElementById('overlay').addEventListener('click', function(e){ if(e.target===this) closeModal(); });
+document.getElementById('modalInput').addEventListener('keydown', e=>{ if(e.key==='Enter') confirmModal(); });
+
+// ─── BOOT ─────────────────────────────────────────────────────────────
+document.getElementById('mainContent').innerHTML = `<div class="loading-screen">
+  <div class="loading-spinner"></div>
+  <p>Loading your lists…</p>
+</div>`;
+
+loadFromDB();
+
+// ─── PWA SERVICE WORKER ───────────────────────────────────────────────
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').catch(console.warn);
+}
+</script>
+</body>
+</html>
