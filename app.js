@@ -20,10 +20,10 @@ function setAuthTab(mode) {
   authMode = mode;
   document.getElementById('tabLogin').classList.toggle('active', mode === 'login');
   document.getElementById('tabSignup').classList.toggle('active', mode === 'signup');
-  document.getElementById('authBtn').textContent = mode === 'login' ? 'Log in 🔓' : 'Sign up ✨';
+  document.getElementById('authBtn').textContent = mode === 'login' ? 'Log in 🔓' : 'Sign up';
   document.getElementById('authSub').textContent = mode === 'login'
     ? 'Log in to see your lists 🔒'
-    : 'Create an account to get started ✨';
+    : 'Create an account to get started';
   // Fixed: password field was always tagged "current-password", which made
   // browsers offer to autofill an old saved password on the signup form
   // instead of letting them create a new one.
@@ -220,7 +220,7 @@ function render() {
   if (!lists.length) { sub.textContent = 'Start by creating a list 💫'; return; }
   const total = lists.reduce((a,l) => a + l.items.length, 0);
   const done  = lists.reduce((a,l) => a + l.items.filter(i=>i.done).length, 0);
-  sub.textContent = total ? `${done} of ${total} done ${done===total && total>0 ? '🎉':'⭐'}` : 'Add some items!';
+  sub.textContent = total ? `${done} of ${total} done ${done===total && total>0 ? '🎉':''}`.trim() : 'Add some items!';
 }
 
 function renderTabs() {
@@ -282,7 +282,7 @@ function getListHTML() {
 
   if (!list.items.length) {
     itemsHtml = `<div class="empty-state">
-      <div class="e-icon">🌟</div>
+      <div class="e-icon">🌸</div>
       <p>Nothing here yet~<br>Add your first item below!</p>
     </div>`;
   }
