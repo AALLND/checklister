@@ -1,10 +1,13 @@
-const CACHE = 'checklister-v3';
+const CACHE = 'checklister-v4';
 const ASSETS = [
   './index.html',
   './style.css',
   './app.js',
   './manifest.json',
-  'https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&display=swap',
+  './logo.png',
+  './icon-192.png',
+  './icon-512.png',
+  'https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap',
   'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2'
 ];
 self.addEventListener('install', e => {

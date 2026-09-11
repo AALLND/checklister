@@ -5,12 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>Checklister ✨</title>
 <link rel="manifest" href="manifest.json">
+<link rel="icon" href="./icon-192.png">
+<link rel="apple-touch-icon" href="./icon-192.png">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Checklister">
-<meta name="theme-color" content="#0E7490">
-<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<meta name="theme-color" content="#3FBE9F">
+<link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
@@ -18,7 +20,7 @@
 
 <!-- ══ AUTH SCREEN ══════════════════════════════════════════════════ -->
 <div id="authScreen">
-  <div class="lock-blob">✨</div>
+  <div class="lock-blob"><img src="./logo.png" alt="Checklister"></div>
   <h1 class="lock-title">Check<span>lister</span></h1>
   <p class="lock-sub" id="authSub">Log in to see your lists 🔒</p>
 
@@ -52,7 +54,7 @@
 <div id="appWrapper">
   <div class="header">
     <div class="header-top">
-      <div class="logo-blob">✨</div>
+      <div class="logo-blob"><img src="./logo.png" alt="Checklister"></div>
       <h1>Check<span>lister</span></h1>
       <div class="sync-dot" id="syncDot" title="Sync status"></div>
       <button class="lock-icon-btn" onclick="logOut()" title="Log out">🔒</button>
