@@ -24,6 +24,10 @@ function setAuthTab(mode) {
   document.getElementById('authSub').textContent = mode === 'login'
     ? 'Log in to see your lists 🔒'
     : 'Create an account to get started ✨';
+  // Fixed: password field was always tagged "current-password", which made
+  // browsers offer to autofill an old saved password on the signup form
+  // instead of letting them create a new one.
+  document.getElementById('pwInput').autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
   hideAuthMessages();
 }
 
@@ -88,6 +92,17 @@ function togglePwVisibility() {
 
 async function logOut() {
   await supabaseClient.auth.signOut();
+  // onAuthStateChange will fire with SIGNED_OUT and call resetToLoginScreen()
+  // for us — see below. Calling it again here is harmless (idempotent).
+  resetToLoginScreen();
+}
+
+// Fixed: this used to live only inside logOut(). If the session ended any
+// other way (token expired, logged out in another tab, magic link flow),
+// currentUser was cleared but the app screen stayed on screen — every
+// save/load after that silently no-op'd because saveToDB() bails out when
+// currentUser is null. Now both paths go through the same reset.
+function resetToLoginScreen() {
   currentUser = null;
   lists = [];
   activeId = null;
@@ -131,14 +146,22 @@ function setSyncState(state) {
 async function loadFromDB() {
   try {
     setSyncState('syncing');
+    // Fixed: was .maybeSingle(), which THROWS if more than one row matches
+    // user_id (this happened in practice — see the upsert fix below and
+    // supabase-setup.sql). That throw sent every load into the catch block,
+    // silently falling back to local, empty-on-a-new-device storage, which
+    // is almost certainly why "logging in doesn't show my lists" happened.
+    // Ordering by most-recent and taking the first row is self-healing even
+    // against old duplicate rows left over from before the fix.
     const { data, error } = await supabaseClient
       .from('checklists')
       .select('data')
       .eq('user_id', currentUser.id)
-      .maybeSingle();
+      .order('updated_at', { ascending: false })
+      .limit(1);
 
     if (error) throw error;
-    lists = (data && data.data) || [];
+    lists = (data && data[0] && data[0].data) || [];
     activeId = lists[0]?.id || null;
     setSyncState('ok');
   } catch (e) {
@@ -154,9 +177,18 @@ async function saveToDB() {
   localStorage.setItem('checklister_' + currentUser.id, JSON.stringify(lists));
   setSyncState('syncing');
   try {
+    // Fixed: upsert() without onConflict resolves conflicts on the table's
+    // PRIMARY KEY (id), not on user_id. Since every save used the same
+    // user_id but a fresh row, this was inserting a brand-new row every
+    // single time instead of updating the existing one — one user could end
+    // up with hundreds of rows, and only "checklists_user_id_key" (added in
+    // supabase-setup.sql) makes onConflict: 'user_id' actually work.
     const { error } = await supabaseClient
       .from('checklists')
-      .upsert({ user_id: currentUser.id, data: lists, updated_at: new Date().toISOString() });
+      .upsert(
+        { user_id: currentUser.id, data: lists, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id' }
+      );
     if (error) throw error;
     setSyncState('ok');
   } catch (e) {
@@ -360,10 +392,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 
-  // Keep in sync if the user logs out in another tab, or a magic link finishes elsewhere.
+  // Fixed: previously only cleared `currentUser`, leaving the app screen
+  // visible with a "logged-in" UI that could no longer actually save or
+  // load anything. Now it fully resets the screen, same as a manual logout.
   supabaseClient.auth.onAuthStateChange((event, session) => {
     if (event === 'SIGNED_OUT') {
-      currentUser = null;
+      resetToLoginScreen();
     }
   });
 });
