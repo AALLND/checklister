@@ -19,7 +19,6 @@
   --mint-glow: rgba(63,190,159,0.35);
   --field: #FCF9F5;                  /* input backgrounds */
   --field-focus: #FFFFFF;
-  --chip-bg: #F7EFE6;
   --tan: #E4C9A8;                    /* quiet icons, checkbox border */
   --ink-faint: #C9B9B6;              /* ticked-off item text */
   --placeholder: #C9B4A6;
@@ -52,7 +51,6 @@
     --mint-glow: rgba(63,190,159,0.18);
     --field: #1F1B1C;
     --field-focus: #2C2627;
-    --chip-bg: #1F1B1C;
     --tan: #7D6858;
     --ink-faint: #6F6360;
     --placeholder: #7C6C66;
@@ -146,13 +144,6 @@ h1, h2, h3, .display {
   width: 100%; max-width: 360px;
   position: relative; z-index: 1;
 }
-.auth-tabs { display: flex; gap: 6px; background: var(--chip-bg); padding: 4px; border-radius: var(--r-pill); margin-bottom: 22px; }
-.auth-tab {
-  flex: 1; border: none; background: none; padding: 9px 0; border-radius: var(--r-pill);
-  font-family: 'Baloo 2', sans-serif; font-size: 14px; font-weight: 600; color: var(--ink-soft);
-  cursor: pointer; transition: all 0.18s;
-}
-.auth-tab.active { background: var(--card); color: var(--accent-text); box-shadow: var(--shadow-sm); }
 .lock-label {
   font-size: 12px; font-weight: 800; color: var(--ink-soft);
   letter-spacing: 0.02em; margin-bottom: 10px;

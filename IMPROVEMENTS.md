@@ -47,7 +47,7 @@ Known limits:
 
 ## ✅ Phase D: New features (done, branch `data-safety`)
 
-- **Forgot password:** a "Forgot password?" link on the login tab emails a reset link (`resetPasswordForEmail`, redirecting back to the app). Opening the link signs the user in and shows a "Choose a new password" sheet (`updateUser`). An expired link shows a clear error on the login screen. The success message is the same whether or not the account exists.
+- **Forgot password:** a "Forgot password?" link on the login screen emails a reset link (`resetPasswordForEmail`, redirecting back to the app). Opening the link signs the user in and shows a "Choose a new password" sheet (`updateUser`). An expired link shows a clear error on the login screen. The success message is the same whether or not the account exists.
   - Needs the app's URL in Supabase → Authentication → URL Configuration → Redirect URLs (see README).
 - **Clear done:** a "Clear done" button on the progress row removes all ticked items. Undo puts them back in place and keeps anything added since.
 - **Dark mode:** follows the device setting (`prefers-color-scheme`). Every hard-coded colour is now a CSS variable, with warm dark counterparts for the mint, coral and sand palette. The browser bar colour (`theme-color`) matches the scheme.
@@ -56,6 +56,7 @@ Known limits:
   - With the handle focused, the up and down arrow keys move the item. Screen readers hear the new position.
 - **Shared sheets:** "New List" and "Choose a new password" use the same dialog behaviour (Escape, Tab trap, focus return).
 - README now has setup steps.
+- **Sign-up removed:** the login screen has no sign-up tab any more. Accounts are created by hand in the Supabase dashboard, with public sign-ups switched off there (see README).
 
 Not done (still open):
 - Reordering lists (tabs). The horizontal tab strip scrolls, so dragging there needs a different gesture.

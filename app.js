@@ -27,7 +27,6 @@ let lists = [];
 let activeId = null;
 let appInited = false;
 let currentUser = null;
-let authMode = 'login'; // 'login' | 'signup'
 
 // Sync state. `base` is the last version of the lists we know is in the
 // cloud, stamped with that row's `updated_at`. Local edits are diffed
@@ -45,22 +44,9 @@ let syncChain = Promise.resolve();
 let syncQueued = null;     // options for the run waiting in syncChain, if any
 
 // ─── AUTH UI ──────────────────────────────────────────────────────────
-function setAuthTab(mode) {
-  authMode = mode;
-  document.getElementById('tabLogin').classList.toggle('active', mode === 'login');
-  document.getElementById('tabSignup').classList.toggle('active', mode === 'signup');
-  document.getElementById('authBtn').textContent = mode === 'login' ? 'Log in 🔓' : 'Sign up';
-  document.getElementById('authSub').textContent = mode === 'login'
-    ? 'Log in to see your lists 🔒'
-    : 'Create an account to get started';
-  // Fixed: password field was always tagged "current-password", which made
-  // browsers offer to autofill an old saved password on the signup form
-  // instead of letting them create a new one.
-  document.getElementById('pwInput').autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
-  document.getElementById('forgotBtn').hidden = mode !== 'login';
-  hideAuthMessages();
-}
-
+// Log in only: there is no sign-up in the app. Accounts are added by hand in
+// the Supabase dashboard, and public sign-ups are switched off there (see
+// README), since hiding the form alone wouldn't stop the API from creating them.
 function hideAuthMessages() {
   document.getElementById('authError').classList.remove('show');
   document.getElementById('authSuccess').classList.remove('show');
@@ -91,21 +77,9 @@ async function submitAuth() {
 
   btn.disabled = true;
   try {
-    if (authMode === 'signup') {
-      const { data, error } = await supabaseClient.auth.signUp({ email, password: pw });
-      if (error) throw error;
-      if (data.session) {
-        // Email confirmation is off in project settings — logged in immediately.
-        onLoggedIn(data.session.user);
-      } else {
-        showAuthSuccess('Check your email to confirm your account, then log in.');
-        setAuthTab('login');
-      }
-    } else {
-      const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password: pw });
-      if (error) throw error;
-      onLoggedIn(data.user);
-    }
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password: pw });
+    if (error) throw error;
+    onLoggedIn(data.user);
   } catch (e) {
     showAuthError(e.message || 'Something went wrong');
   } finally {

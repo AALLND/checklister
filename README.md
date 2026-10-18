@@ -5,9 +5,10 @@ A small installable checklist app (PWA). Plain HTML, CSS and JavaScript with no 
 ## Setup
 
 1. **Database:** in the Supabase SQL editor, run [`supabase-setup.sql`](supabase-setup.sql). It creates the `checklists` table, the one-row-per-user constraint and the Row Level Security policies.
-2. **Password reset links:** in Supabase → Authentication → URL Configuration, add the app's address to **Redirect URLs** (for example `https://<user>.github.io/checklister/`), and `http://localhost:5173/` for local testing. Without this, reset emails link to the Site URL instead of the app.
-3. **Hosting:** serve the folder as static files (GitHub Pages works as-is). No build step.
-4. **Local development:** run any static server in the folder, for example `npx serve -l 5173`, and open `http://localhost:5173/`.
+2. **Accounts (no public sign-up):** the app has no sign-up form. In Supabase → Authentication → Sign In / Providers, turn off **Allow new users to sign up**, otherwise anyone could still create an account through the API with the public key. Add users by hand under Authentication → Users → **Add user** → **Create new user**, with **Auto Confirm User** ticked.
+3. **Password reset links:** in Supabase → Authentication → URL Configuration, add the app's address to **Redirect URLs** (for example `https://<user>.github.io/checklister/`), and `http://localhost:5173/` for local testing. Without this, reset emails link to the Site URL instead of the app.
+4. **Hosting:** serve the folder as static files (GitHub Pages works as-is). No build step.
+5. **Local development:** run any static server in the folder, for example `npx serve -l 5173`, and open `http://localhost:5173/`.
 
 Supabase's built-in email sender only allows a few emails per hour. For real use, set up custom SMTP under Authentication → Emails.
 

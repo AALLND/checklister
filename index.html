@@ -27,14 +27,9 @@
 <div id="authScreen">
   <div class="lock-blob"><img src="./logo.png" alt="Checklister"></div>
   <h1 class="lock-title">Check<span>lister</span></h1>
-  <p class="lock-sub" id="authSub">Log in to see your lists 🔒</p>
+  <p class="lock-sub">Log in to see your lists 🔒</p>
 
   <div class="lock-card">
-    <div class="auth-tabs">
-      <button class="auth-tab active" id="tabLogin" onclick="setAuthTab('login')">Log in</button>
-      <button class="auth-tab" id="tabSignup" onclick="setAuthTab('signup')">Sign up</button>
-    </div>
-
     <form id="authForm" onsubmit="return false;">
       <div class="lock-label">✉️ Email</div>
       <input class="lock-input" type="email" id="emailInput" placeholder="you@example.com" autocomplete="email" style="margin-bottom:16px;">
