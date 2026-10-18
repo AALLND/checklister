@@ -243,8 +243,9 @@ h1, h2, h3, .display {
 .list-card {
   background: var(--card); border-radius: var(--r-lg);
   box-shadow: var(--shadow); border: 1.5px solid var(--sand-border);
-  overflow: hidden; animation: popIn 0.28s cubic-bezier(0.34,1.56,0.64,1);
+  overflow: hidden;
 }
+.list-card.pop-in { animation: popIn 0.28s cubic-bezier(0.34,1.56,0.64,1); }
 @keyframes popIn { from{opacity:0;transform:scale(0.96) translateY(8px)} to{opacity:1;transform:scale(1) translateY(0)} }
 
 .card-header { padding: 18px 18px 14px; display: flex; align-items: center; gap: 10px; border-bottom: 1.5px solid var(--sand-border); }
@@ -264,13 +265,16 @@ h1, h2, h3, .display {
 .item-row {
   display: flex; align-items: center; gap: 11px;
   padding: 11px 18px; border-bottom: 1.5px solid #FAF5EF;
-  transition: background 0.15s; animation: fadeSlide 0.22s ease;
+  transition: background 0.15s;
 }
+.item-row.slide-in { animation: fadeSlide 0.22s ease; }
 @keyframes fadeSlide { from{opacity:0;transform:translateX(-6px)} to{opacity:1;transform:translateX(0)} }
 .item-row:last-child { border-bottom: none; }
 
-.cb-wrap { width: 26px; height: 26px; flex-shrink: 0; cursor: pointer; }
-.cb-wrap input { display: none; }
+.cb-wrap { width: 26px; height: 26px; flex-shrink: 0; cursor: pointer; position: relative; }
+/* Visually hidden but still focusable, so the checkbox works with the keyboard. */
+.cb-wrap input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.cb-wrap input:focus-visible + .cb-box { outline: 2.5px solid var(--mint-deep); outline-offset: 2px; }
 .cb-box {
   width: 26px; height: 26px; border: 2.5px solid #E4C9A8; border-radius: 9px;
   display: flex; align-items: center; justify-content: center;
@@ -282,7 +286,7 @@ h1, h2, h3, .display {
 
 .item-text-wrap { flex: 1; min-width: 0; }
 .item-text {
-  font-family: 'Nunito', sans-serif; font-size: 15px; font-weight: 600;
+  font-family: 'Nunito', sans-serif; font-size: 16px; font-weight: 600;
   border: none; outline: none; background: transparent; width: 100%;
   color: var(--ink); transition: all 0.2s; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -298,7 +302,7 @@ h1, h2, h3, .display {
 
 .add-row { padding: 12px 18px; display: flex; align-items: center; gap: 10px; border-top: 1.5px solid var(--sand-border); }
 .add-row-icon { font-size: 18px; flex-shrink: 0; }
-.add-input { flex: 1; font-family: 'Nunito', sans-serif; font-size: 14px; font-weight: 600; border: none; outline: none; background: transparent; color: var(--ink); }
+.add-input { flex: 1; min-width: 0; font-family: 'Nunito', sans-serif; font-size: 16px; font-weight: 600; border: none; outline: none; background: transparent; color: var(--ink); }
 .add-input::placeholder { color: #C9B4A6; }
 .add-btn {
   width: 34px; height: 34px; border-radius: 11px;
@@ -349,7 +353,7 @@ h1, h2, h3, .display {
 .modal h3 { font-family: 'Baloo 2', sans-serif; font-size: 19px; font-weight: 700; color: var(--ink); margin-bottom: 16px; }
 .modal-input {
   width: 100%; padding: 14px 16px; border: 2px solid var(--sand-border); border-radius: var(--r-sm);
-  font-family: 'Nunito', sans-serif; font-size: 15px; font-weight: 600;
+  font-family: 'Nunito', sans-serif; font-size: 16px; font-weight: 600;
   outline: none; color: var(--ink); background: #FCF9F5; transition: border-color 0.2s; margin-bottom: 14px;
 }
 .modal-input:focus { border-color: var(--mint); background: white; }
@@ -371,3 +375,22 @@ h1, h2, h3, .display {
 
 .all-done-banner { display: none; align-items: center; justify-content: center; gap: 8px; padding: 10px 18px; background: var(--mint-pale); border-top: 1.5px solid var(--mint-border); font-size: 13px; font-weight: 800; color: var(--mint-deep); }
 .all-done-banner.show { display: flex; }
+
+/* ── TOAST (undo after delete) ── */
+.toast {
+  position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom));
+  transform: translate(-50%, 20px); opacity: 0; visibility: hidden;
+  width: max-content; max-width: min(448px, calc(100vw - 32px));
+  display: flex; align-items: center; gap: 14px;
+  padding: 10px 10px 10px 18px; border-radius: var(--r-pill);
+  background: var(--ink); color: #fff; box-shadow: var(--shadow);
+  font-size: 14px; font-weight: 700; z-index: 200;
+  transition: transform 0.22s ease, opacity 0.22s ease, visibility 0.22s;
+}
+.toast.show { transform: translate(-50%, 0); opacity: 1; visibility: visible; }
+.toast span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toast-undo {
+  flex-shrink: 0; border: none; border-radius: var(--r-pill); padding: 7px 14px;
+  background: var(--mint); color: #fff; cursor: pointer;
+  font-family: 'Baloo 2', sans-serif; font-size: 14px; font-weight: 600;
+}

@@ -111,8 +111,10 @@ async function submitAuth() {
 function togglePwVisibility() {
   const inp = document.getElementById('pwInput');
   const btn = document.getElementById('togglePwBtn');
-  if (inp.type === 'password') { inp.type = 'text'; btn.textContent = '🙈'; }
-  else { inp.type = 'password'; btn.textContent = '👁'; }
+  const show = inp.type === 'password';
+  inp.type = show ? 'text' : 'password';
+  btn.textContent = show ? '🙈' : '👁';
+  btn.setAttribute('aria-pressed', String(show));
 }
 
 async function logOut() {
@@ -139,6 +141,11 @@ function resetToLoginScreen() {
   cloudChecked = false;
   retryDelay = 2000;
   appInited = false;
+  renderedListId = null;
+  justAddedId = null;
+  addDrafts = {};
+  hideToast();
+  closeModal();
   setSyncState('ok');
   document.getElementById('appWrapper').style.display = 'none';
   document.getElementById('authScreen').style.display = 'flex';
@@ -170,7 +177,11 @@ function initApp() {
       <p>Loading your lists…</p>
     </div>`;
   }
-  sync().then(() => { if (currentUser === user) render(); });
+  // pullFromCloud renders when the lists change; this covers the cases where
+  // nothing changed but the spinner still needs replacing.
+  sync().then(() => {
+    if (currentUser === user && document.querySelector('#mainContent .loading-screen')) render();
+  });
 }
 
 // ─── SYNC ─────────────────────────────────────────────────────────────
@@ -379,12 +390,49 @@ function fixActiveId() {
 
 // ─── UTILS ────────────────────────────────────────────────────────────
 function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,5); }
-function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+function shorten(s, n = 30) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
+function findList(id) { return lists.find(l => l.id === id); }
+function findItem(listId, itemId) { return findList(listId)?.items.find(i => i.id === itemId); }
+function listStats(list) {
+  const total = list.items.length;
+  const done = list.items.filter(i => i.done).length;
+  return { total, done, pct: total ? Math.round(done / total * 100) : 0, allDone: total > 0 && done === total };
+}
 
 // ─── RENDER ───────────────────────────────────────────────────────────
+// render() rebuilds the tabs and the card from `lists`. Entry animations
+// only play when a list is first shown or an item was just added, and the
+// focused field (with any half-typed text) survives the rebuild. Ticking a
+// checkbox doesn't rebuild anything; see toggleItem().
+let renderedListId = null; // list whose card is on screen
+let justAddedId = null;    // item to animate in on the next render
+let addDrafts = {};        // unsent "Add something…" text, per list
+
 function render() {
+  const focus = captureFocus();
   renderTabs();
   renderContent();
+  updateSubtitle();
+  restoreFocus(focus);
+}
+
+function captureFocus() {
+  const el = document.activeElement;
+  if (!el || !el.dataset || !el.dataset.focusKey) return null;
+  return { key: el.dataset.focusKey, tag: el.tagName, value: el.value, start: el.selectionStart, end: el.selectionEnd };
+}
+
+function restoreFocus(f) {
+  if (!f) return;
+  const el = document.querySelector(`[data-focus-key="${CSS.escape(f.key)}"]`);
+  if (!el) return;
+  if (f.tag === 'INPUT' && el.type === 'text') el.value = f.value;
+  el.focus();
+  if (f.start != null) { try { el.setSelectionRange(f.start, f.end); } catch (e) {} }
+}
+
+function updateSubtitle() {
   const sub = document.getElementById('subtitle');
   if (!sub) return;
   if (!lists.length) { sub.textContent = 'Start by creating a list 💫'; return; }
@@ -393,88 +441,88 @@ function render() {
   sub.textContent = total ? `${done} of ${total} done ${done===total && total>0 ? '🎉':''}`.trim() : 'Add some items!';
 }
 
+function updateProgress(list) {
+  const { pct, allDone } = listStats(list);
+  const fill = document.querySelector('.progress-fill');
+  if (fill) { fill.style.width = pct + '%'; fill.classList.toggle('full', allDone); }
+  const label = document.querySelector('.progress-label');
+  if (label) label.textContent = pct + '%';
+  document.querySelector('.all-done-banner')?.classList.toggle('show', allDone);
+}
+
 function renderTabs() {
   const el = document.getElementById('listTabs');
   if (!el) return;
-  let h = '';
-  lists.forEach(l => {
-    const a = l.id === activeId ? 'active' : '';
-    h += `<div class="tab ${a}" onclick="switchList('${l.id}')">
+  el.innerHTML = lists.map(l => {
+    const active = l.id === activeId;
+    const id = escHtml(l.id);
+    return `<button class="tab${active ? ' active' : ''}" data-action="switch-list" data-list="${id}"
+      data-focus-key="tab:${id}" aria-pressed="${active}">
       ${escHtml(l.name)}
       <span class="tab-badge">${l.items.length}</span>
-    </div>`;
-  });
-  h += `<button class="new-tab-btn" onclick="openModal()">＋ New List</button>`;
-  el.innerHTML = h;
+    </button>`;
+  }).join('') + `<button class="new-tab-btn" data-action="new-list">＋ New List</button>`;
 }
 
 function renderContent() {
   const el = document.getElementById('mainContent');
   if (!el) return;
+  const list = findList(activeId);
 
-  if (!lists.length && !cloudChecked) {
-    el.innerHTML = `<div class="no-lists">
-      <div class="nl-icon">☁️</div>
-      <h2>Can't reach the cloud</h2>
-      <p>Your lists will show up as soon<br>as you're back online.</p>
-      <button class="retry-btn" onclick="sync({ pull: true })">Try again</button>
-    </div>`; return;
+  if (!list) {
+    renderedListId = null;
+    el.innerHTML = cloudChecked
+      ? `<div class="no-lists">
+          <div class="nl-icon">🌸</div>
+          <h2>No lists yet!</h2>
+          <p>Tap <strong>＋ New List</strong> above<br>to create your first checklist~</p>
+        </div>`
+      : `<div class="no-lists">
+          <div class="nl-icon">☁️</div>
+          <h2>Can't reach the cloud</h2>
+          <p>Your lists will show up as soon<br>as you're back online.</p>
+          <button class="retry-btn" data-action="retry">Try again</button>
+        </div>`;
+    return;
   }
 
-  if (!lists.length) {
-    el.innerHTML = `<div class="no-lists">
-      <div class="nl-icon">🌸</div>
-      <h2>No lists yet!</h2>
-      <p>Tap <strong>＋ New List</strong> above<br>to create your first checklist~</p>
-    </div>`; return;
-  }
-
-  el.innerHTML = getListHTML();
+  el.innerHTML = getListHTML(list);
+  renderedListId = list.id;
+  justAddedId = null;
 }
 
-function getListHTML() {
-  if (!lists.length) return '';
-  const list = lists.find(l => l.id === activeId);
-  if (!list) return '';
+function getListHTML(list) {
+  const { total, pct, allDone } = listStats(list);
+  const isNewCard = list.id !== renderedListId;
+  const lid = escHtml(list.id);
 
-  const done  = list.items.filter(i=>i.done).length;
-  const total = list.items.length;
-  const pct   = total ? Math.round(done/total*100) : 0;
-  const allDone = total > 0 && done === total;
-
-  let itemsHtml = '';
-  list.items.forEach(item => {
-    const dc = item.done ? 'done' : '';
-    itemsHtml += `<li class="item-row">
+  const itemsHtml = list.items.length ? list.items.map(item => {
+    const iid = escHtml(item.id);
+    const animate = isNewCard || item.id === justAddedId;
+    return `<li class="item-row${animate ? ' slide-in' : ''}" data-item="${iid}">
       <label class="cb-wrap">
-        <input type="checkbox" ${item.done?'checked':''} onchange="toggleItem('${list.id}','${item.id}',this.checked)">
-        <div class="cb-box"><span class="tick">✓</span></div>
+        <input type="checkbox" data-action="toggle" data-focus-key="cb:${iid}" aria-label="${escHtml(item.text)}" ${item.done ? 'checked' : ''}>
+        <div class="cb-box" aria-hidden="true"><span class="tick">✓</span></div>
       </label>
       <div class="item-text-wrap">
-        <input class="item-text ${dc}" type="text" value="${escHtml(item.text)}"
-          onblur="editItem('${list.id}','${item.id}',this.value)"
-          onkeydown="if(event.key==='Enter')this.blur()">
+        <input class="item-text${item.done ? ' done' : ''}" type="text" value="${escHtml(item.text)}"
+          data-field="item" data-focus-key="item:${iid}" aria-label="Item text">
       </div>
-      <button class="item-del" onclick="deleteItem('${list.id}','${item.id}')">✕</button>
+      <button class="item-del" data-action="delete-item" data-focus-key="del:${iid}" aria-label="Delete item">✕</button>
     </li>`;
-  });
-
-  if (!list.items.length) {
-    itemsHtml = `<div class="empty-state">
+  }).join('') : `<li class="empty-state">
       <div class="e-icon">🌸</div>
       <p>Nothing here yet~<br>Add your first item below!</p>
-    </div>`;
-  }
+    </li>`;
 
-  return `<div class="list-card">
+  return `<div class="list-card${isNewCard ? ' pop-in' : ''}" data-list="${lid}">
     <div class="card-header">
       <input class="card-title-input" type="text" value="${escHtml(list.name)}"
-        onblur="renameList('${list.id}',this.value)"
-        onkeydown="if(event.key==='Enter')this.blur()">
-      <button class="del-list-btn" onclick="deleteList('${list.id}')" title="Delete list">🗑</button>
+        data-field="title" data-focus-key="title:${lid}" aria-label="List name">
+      <button class="del-list-btn" data-action="delete-list" title="Delete list" aria-label="Delete list">🗑</button>
     </div>
     ${total > 0 ? `<div class="progress-wrap">
-      <div class="progress-track">
+      <div class="progress-track" aria-hidden="true">
         <div class="progress-fill ${allDone?'full':''}" style="width:${pct}%"></div>
       </div>
       <span class="progress-label">${pct}%</span>
@@ -482,12 +530,32 @@ function getListHTML() {
     <ul class="items-list">${itemsHtml}</ul>
     <div class="all-done-banner ${allDone?'show':''}">🎊 All done! You're amazing!</div>
     <div class="add-row">
-      <span class="add-row-icon">🌸</span>
+      <span class="add-row-icon" aria-hidden="true">🌸</span>
       <input class="add-input" id="newItemInput" type="text" placeholder="Add something…" maxlength="100"
-        onkeydown="if(event.key==='Enter')addItem('${list.id}')">
-      <button class="add-btn" onclick="addItem('${list.id}')">＋</button>
+        value="${escHtml(addDrafts[list.id] || '')}" data-field="add" data-focus-key="add:${lid}" aria-label="New item">
+      <button class="add-btn" data-action="add-item" aria-label="Add item">＋</button>
     </div>
   </div>`;
+}
+
+// ─── TOAST ────────────────────────────────────────────────────────────
+let toastTimer = null;
+let toastUndo = null;
+
+function showToast(message, undo) {
+  const el = document.getElementById('toast');
+  toastUndo = undo || null;
+  el.innerHTML = `<span>${escHtml(message)}</span>`
+    + (undo ? `<button class="toast-undo" data-action="undo">Undo</button>` : '');
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(hideToast, 6000);
+}
+
+function hideToast() {
+  clearTimeout(toastTimer);
+  toastUndo = null;
+  document.getElementById('toast')?.classList.remove('show');
 }
 
 // ─── ACTIONS ──────────────────────────────────────────────────────────
@@ -495,56 +563,106 @@ function switchList(id) { activeId = id; render(); }
 
 function addItem(listId) {
   const inp = document.getElementById('newItemInput');
+  const list = findList(listId);
   const text = inp.value.trim();
-  if (!text) return;
-  lists.find(l=>l.id===listId).items.push({id:uid(), text, done:false});
+  if (!text || !list) return;
+  const item = { id: uid(), text, done: false };
+  list.items.push(item);
+  inp.value = '';
+  addDrafts[listId] = '';
+  justAddedId = item.id;
   scheduleSave();
   render();
-  setTimeout(()=>{ const n=document.getElementById('newItemInput'); if(n) n.focus(); }, 50);
+  document.getElementById('newItemInput')?.focus();
 }
 
 function toggleItem(listId, itemId, checked) {
-  lists.find(l=>l.id===listId).items.find(i=>i.id===itemId).done = checked;
+  const list = findList(listId);
+  const item = findItem(listId, itemId);
+  if (!item) return;
+  item.done = checked;
   scheduleSave();
-  render();
+  // Updated in place rather than re-rendered, so the checkbox and progress
+  // bar animate and nothing else on screen is disturbed.
+  document.querySelector(`.item-row[data-item="${CSS.escape(itemId)}"] .item-text`)?.classList.toggle('done', checked);
+  updateProgress(list);
+  updateSubtitle();
 }
 
-function editItem(listId, itemId, value) {
-  const text = value.trim();
-  if (!text) return;
-  lists.find(l=>l.id===listId).items.find(i=>i.id===itemId).text = text;
+function editItem(listId, itemId, input) {
+  const item = findItem(listId, itemId);
+  if (!item) return;
+  const text = input.value.trim();
+  if (!text) { input.value = item.text; return; } // items can't be blank: put the old text back
+  input.value = text;
+  if (text === item.text) return;
+  item.text = text;
+  input.closest('.item-row')?.querySelector('input[type="checkbox"]')?.setAttribute('aria-label', text);
   scheduleSave();
 }
 
 function deleteItem(listId, itemId) {
-  const list = lists.find(l=>l.id===listId);
-  list.items = list.items.filter(i=>i.id!==itemId);
+  const list = findList(listId);
+  const index = list ? list.items.findIndex(i => i.id === itemId) : -1;
+  if (index < 0) return;
+  const [item] = list.items.splice(index, 1);
   scheduleSave();
   render();
+  showToast(`Deleted "${shorten(item.text)}"`, () => {
+    const l = findList(listId);
+    if (!l || l.items.some(i => i.id === item.id)) return;
+    l.items.splice(Math.min(index, l.items.length), 0, item);
+    justAddedId = item.id;
+    scheduleSave();
+    render();
+  });
 }
 
-function renameList(listId, value) {
-  const name = value.trim();
-  if (!name) return;
-  lists.find(l=>l.id===listId).name = name;
+function renameList(listId, input) {
+  const list = findList(listId);
+  if (!list) return;
+  const name = input.value.trim();
+  if (!name) { input.value = list.name; return; } // lists can't be nameless: put the old name back
+  input.value = name;
+  if (name === list.name) return;
+  list.name = name;
   scheduleSave();
-  render();
+  renderTabs();
 }
 
 function deleteList(listId) {
-  if (!confirm('Delete this list? 🥺')) return;
-  lists = lists.filter(l=>l.id!==listId);
-  activeId = lists[0]?.id || null;
+  const index = lists.findIndex(l => l.id === listId);
+  if (index < 0) return;
+  const [list] = lists.splice(index, 1);
+  activeId = lists[Math.min(index, lists.length - 1)]?.id || null;
   scheduleSave();
   render();
+  showToast(`Deleted list "${shorten(list.name)}"`, () => {
+    if (findList(list.id)) return;
+    lists.splice(Math.min(index, lists.length), 0, list);
+    activeId = list.id;
+    scheduleSave();
+    render();
+  });
 }
 
+let modalReturnFocus = null;
+
 function openModal() {
+  modalReturnFocus = document.activeElement;
   document.getElementById('modalInput').value = '';
   document.getElementById('overlay').classList.add('open');
   setTimeout(()=>document.getElementById('modalInput').focus(), 300);
 }
-function closeModal() { document.getElementById('overlay').classList.remove('open'); }
+
+function closeModal() {
+  const overlay = document.getElementById('overlay');
+  if (!overlay.classList.contains('open')) return;
+  overlay.classList.remove('open');
+  if (modalReturnFocus && document.contains(modalReturnFocus)) modalReturnFocus.focus();
+  modalReturnFocus = null;
+}
+
 function confirmModal() {
   const name = document.getElementById('modalInput').value.trim();
   if (!name) return;
@@ -553,13 +671,98 @@ function confirmModal() {
   activeId = l.id;
   scheduleSave();
   render();
+  modalReturnFocus = null;
   closeModal();
+  document.getElementById('newItemInput')?.focus(); // next step: add the first item
+}
+
+// Keyboard support inside the "New List" sheet: Escape closes it and Tab
+// stays within it.
+function onModalKeydown(e) {
+  if (!document.getElementById('overlay').classList.contains('open')) return;
+  if (e.key === 'Escape') { closeModal(); return; }
+  if (e.key !== 'Tab') return;
+  const focusable = [...document.querySelectorAll('#overlay input, #overlay button')];
+  const first = focusable[0], last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
+
+// One listener per container instead of inline handlers in the generated
+// HTML. Rows and cards carry their ids in data-item / data-list.
+function setupListEvents() {
+  const tabs = document.getElementById('listTabs');
+  const main = document.getElementById('mainContent');
+  const ids = el => ({
+    listId: el.closest('[data-list]')?.dataset.list,
+    itemId: el.closest('[data-item]')?.dataset.item
+  });
+
+  tabs.addEventListener('click', e => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    if (btn.dataset.action === 'switch-list') switchList(btn.dataset.list);
+    else if (btn.dataset.action === 'new-list') openModal();
+  });
+
+  main.addEventListener('click', e => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    const { listId, itemId } = ids(btn);
+    switch (btn.dataset.action) {
+      case 'add-item':    addItem(listId); break;
+      case 'delete-item': deleteItem(listId, itemId); break;
+      case 'delete-list': deleteList(listId); break;
+      case 'retry':       sync({ pull: true }); break;
+    }
+  });
+
+  main.addEventListener('change', e => {
+    if (e.target.dataset.action !== 'toggle') return;
+    const { listId, itemId } = ids(e.target);
+    toggleItem(listId, itemId, e.target.checked);
+  });
+
+  main.addEventListener('input', e => {
+    if (e.target.dataset.field === 'add') addDrafts[ids(e.target).listId] = e.target.value;
+  });
+
+  main.addEventListener('focusout', e => {
+    const field = e.target.dataset.field;
+    const { listId, itemId } = ids(e.target);
+    if (field === 'item') editItem(listId, itemId, e.target);
+    else if (field === 'title') renameList(listId, e.target);
+  });
+
+  main.addEventListener('keydown', e => {
+    const field = e.target.dataset.field;
+    if (!field || e.isComposing) return;
+    const { listId, itemId } = ids(e.target);
+    if (e.key === 'Enter') {
+      if (field === 'add') addItem(listId);
+      else e.target.blur();
+    } else if (e.key === 'Escape' && field !== 'add') {
+      // Throw away the edit: put the saved text back before blurring.
+      const saved = field === 'title' ? findList(listId)?.name : findItem(listId, itemId)?.text;
+      if (saved != null) e.target.value = saved;
+      e.target.blur();
+    }
+  });
+
+  document.getElementById('toast').addEventListener('click', e => {
+    if (!e.target.closest('[data-action="undo"]') || !toastUndo) return;
+    const undo = toastUndo;
+    hideToast();
+    undo();
+  });
 }
 
 // ─── STARTUP ──────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
+  setupListEvents();
   document.getElementById('overlay').addEventListener('click', function(e){ if(e.target===this) closeModal(); });
-  document.getElementById('modalInput').addEventListener('keydown', e=>{ if(e.key==='Enter') confirmModal(); });
+  document.getElementById('modalInput').addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.isComposing) confirmModal(); });
+  document.addEventListener('keydown', onModalKeydown);
   document.getElementById('authForm').addEventListener('keydown', e => { if (e.key === 'Enter') submitAuth(); });
 
   // Restore an existing session (e.g. page refresh) without re-prompting login.

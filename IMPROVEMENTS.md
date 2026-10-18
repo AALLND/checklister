@@ -1,7 +1,7 @@
 # Improvement plan
 
 Findings from a review of the app (October 2026), grouped into phases.
-Phases A and B are done; the rest are queued.
+Phases A, B and C are done; Phase D is queued.
 
 ## ✅ Phase A: Data safety (done, branch `data-safety`)
 
@@ -28,20 +28,22 @@ Known limits:
   `curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A`
 - Skipped: the "update available" toast. With network-first loading the app is already current on every load, so it isn't needed.
 
-## Phase C: UX and accessibility
+## ✅ Phase C: UX and accessibility (done, branch `data-safety`)
 
-1. **Stop full re-renders**: every action rebuilds the whole card, so the card's pop-in and every row's slide-in animation replay on each checkbox tick. Text typed in "Add something…" is also wiped when another item is ticked.
-   - Update only the affected row, badge and progress bar, or keep the add-input value and focus across renders.
-   - Play the entry animations only on first display or for newly added rows.
-2. **Accessibility**:
-   - The checkbox `<input>` is `display:none`, so it can't be reached by keyboard. Hide it visually instead and show focus on `.cb-box`.
-   - List tabs are `<div onclick>`. Make them `<button>`s with `aria-pressed` / `role="tab"`.
-   - Add `aria-label` to the emoji-only buttons (🔒, 🗑, ✕, ＋, 👁) and to the item text inputs.
-   - Remove `maximum-scale=1.0` from the viewport meta so pinch-zoom works.
-   - Modal: `role="dialog"`, `aria-modal`, Escape to close, return focus on close.
-3. **Undo instead of confirm**: deleting an item has no safety net, and deleting a list uses a native `confirm()`. Show a toast ("Item deleted · Undo") for a few seconds.
-4. **Clearing an item's text**: the field goes blank but the saved data keeps the old text. Restore the old text on blur (or offer to delete the item).
-5. **Code hygiene**: escape `'` in `escHtml`, and move from inline `onclick="fn('${id}')"` strings to event delegation with `data-` attributes.
+- **No more full redraws on a tick:** ticking a checkbox updates only that row, the progress bar and the subtitle. The checkbox and progress bar now actually animate.
+- Other redraws keep the focused field, its half-typed text and the cursor position (also when another device's changes arrive).
+- Each list keeps its own unsent "Add something…" text.
+- Entry animations play only when a list is first shown or an item was just added.
+- **Keyboard and screen readers:**
+  - The checkbox is visually hidden but still focusable, with a visible focus ring.
+  - List tabs are `<button aria-pressed>`.
+  - Every icon-only button and input has an `aria-label`.
+  - The "Offline" label and the toast are announced (`aria-live`).
+  - The "New List" sheet is a proper dialog: Escape closes it, Tab stays inside it, and focus returns to where it came from.
+- **Zoom:** `maximum-scale=1.0` is removed so pinch-zoom works. Text inputs are now 16px so iOS doesn't auto-zoom when one is focused.
+- **Undo instead of confirm:** deleting an item or a list shows a 6 s "Deleted … · Undo" toast that puts it back in the same place. The native `confirm()` on list delete is gone.
+- **Blank text:** clearing an item's text or a list's name puts the saved text back on blur. Escape throws away an edit. Leaving a field unchanged no longer triggers a save.
+- **Code hygiene:** the generated HTML has no inline `onclick="fn('${id}')"` handlers any more. One delegated listener per container reads `data-list` / `data-item`, and `escHtml` also escapes `'`.
 
 ## Phase D: New features
 
