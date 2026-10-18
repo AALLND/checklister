@@ -677,7 +677,7 @@ function getListHTML(list) {
     <ul class="items-list">${itemsHtml}</ul>
     <div class="add-row">
       <span class="add-row-icon" aria-hidden="true">🌸</span>
-      <input class="add-input" id="newItemInput" type="text" placeholder="Add something…" maxlength="100"
+      <input class="add-input" id="newItemInput" type="text" placeholder="Add something…" maxlength="100" autocapitalize="sentences"
         value="${escHtml(addDrafts[list.id] || '')}" data-field="add" data-focus-key="add:${lid}" aria-label="New item">
       <button class="add-btn" data-action="add-item" aria-label="Add item">＋</button>
     </div>
@@ -710,8 +710,9 @@ function switchList(id) { activeId = id; render(); }
 function addItem(listId) {
   const inp = document.getElementById('newItemInput');
   const list = findList(listId);
-  const text = inp.value.trim();
-  if (!text || !list) return;
+  const raw = inp.value.trim();
+  if (!raw || !list) return;
+  const text = raw[0].toUpperCase() + raw.slice(1); // new items always start with a capital letter
   const item = { id: uid(), text, done: false };
   list.items.push(item);
   inp.value = '';
