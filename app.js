@@ -19,6 +19,14 @@ function fetchWithTimeout(url, opts = {}) {
 // back here with "type=recovery" in the hash, or an error if it expired.
 const authRedirect = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
 
+// An invite link (?invite=…) is remembered until the user has logged in.
+(function rememberInvite() {
+  const code = new URLSearchParams(location.search).get('invite');
+  if (!code) return;
+  try { sessionStorage.setItem('checklister_invite', code); } catch (e) {}
+  history.replaceState(null, '', location.pathname + location.hash);
+})();
+
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   global: { fetch: fetchWithTimeout }
 });
@@ -28,20 +36,25 @@ let activeId = null;
 let appInited = false;
 let currentUser = null;
 
-// Sync state. `base` is the last version of the lists we know is in the
-// cloud, stamped with that row's `updated_at`. Local edits are diffed
-// against it when another device has saved in the meantime.
-let base = [];
-let baseUpdatedAt = null;
-let dirty = false;         // local edits not yet in the cloud
-let editVersion = 0;       // bumped on every local edit
-let cloudChecked = false;  // loaded from the cloud at least once this session
+// Sync state, per list. meta[id] = { base, at }: `base` is the last version
+// of that list we know is in the cloud and `at` its row's `updated_at`. A
+// list that differs from its base (or has none yet) has edits to upload.
+// `removals` holds lists deleted or left on this device, done in the cloud
+// once their Undo window has passed. `shareInfo` comes from the last pull.
+let meta = {};
+let removals = {};          // id → { leave, at }
+let shareInfo = {};         // id → { mine, members }
+let cloudChecked = false;   // loaded from the cloud at least once this session
 let lastPull = 0;
 let saveTimer = null;
 let retryTimer = null;
+let removalTimer = null;
 let retryDelay = 2000;
 let syncChain = Promise.resolve();
-let syncQueued = null;     // options for the run waiting in syncChain, if any
+let syncQueued = null;      // options for the run waiting in syncChain, if any
+let realtimeChannel = null;
+let realtimeTimer = null;
+const UNDO_MS = 6500;       // a little longer than the Undo toast is shown
 
 // ─── AUTH UI ──────────────────────────────────────────────────────────
 // Log in only: there is no sign-up in the app. Accounts are added by hand in
@@ -99,8 +112,9 @@ function togglePwVisibility() {
 async function logOut() {
   // Push pending edits first so they aren't stranded on this device.
   clearTimeout(saveTimer);
-  if (dirty) await sync();
-  if (dirty && !confirm('Some changes haven\'t reached the cloud yet. They stay saved on this device and sync the next time you log in here.\n\nLog out anyway?')) return;
+  Object.values(removals).forEach(r => { r.at = 0; }); // Undo is gone once we log out
+  if (hasPending()) await sync();
+  if (hasPending() && !confirm('Some changes haven\'t reached the cloud yet. They stay saved on this device and sync the next time you log in here.\n\nLog out anyway?')) return;
   await supabaseClient.auth.signOut();
   // onAuthStateChange also fires SIGNED_OUT; resetting twice is harmless.
   resetToLoginScreen();
@@ -111,12 +125,14 @@ async function logOut() {
 function resetToLoginScreen() {
   clearTimeout(saveTimer);
   clearTimeout(retryTimer);
+  clearTimeout(removalTimer);
+  stopRealtime();
   currentUser = null;
   lists = [];
   activeId = null;
-  base = [];
-  baseUpdatedAt = null;
-  dirty = false;
+  meta = {};
+  removals = {};
+  shareInfo = {};
   cloudChecked = false;
   retryDelay = 2000;
   appInited = false;
@@ -126,6 +142,7 @@ function resetToLoginScreen() {
   hideToast();
   closeModal();
   closeSheet('pwOverlay');
+  closeSheet('shareOverlay');
   setSyncState('ok');
   document.getElementById('appWrapper').style.display = 'none';
   document.getElementById('authScreen').style.display = 'flex';
@@ -160,19 +177,34 @@ function initApp() {
   // pullFromCloud renders when the lists change; this covers the cases where
   // nothing changed but the spinner still needs replacing.
   sync().then(() => {
-    if (currentUser === user && document.querySelector('#mainContent .loading-screen')) render();
+    if (currentUser !== user) return;
+    if (document.querySelector('#mainContent .loading-screen')) render();
+    startRealtime();
+    acceptPendingInvite();
   });
 }
 
 // ─── SYNC ─────────────────────────────────────────────────────────────
-// The whole set of lists is stored as one JSON row per user. Rules:
-//  • Every edit is written to localStorage first (marked dirty), then pushed.
-//  • Nothing is pushed until this session has loaded the cloud version, so a
-//    stale or empty local copy can never overwrite newer cloud data.
-//  • A push only overwrites the exact cloud version it was based on. If
-//    another device saved in between, the two versions are merged and the
-//    push is retried.
+// Each list is its own row in the `lists` table, shared by its members
+// (see supabase-setup.sql). Rules, per list:
+//  • Every edit is written to localStorage first, then uploaded.
+//  • Nothing is uploaded until this session has loaded the cloud versions,
+//    so a stale local copy can never overwrite newer data.
+//  • An upload only overwrites the exact version it was based on. If
+//    someone else saved in between, the two versions are merged and the
+//    upload is retried.
+//  • Deleting or leaving a list waits out the Undo window before it's done
+//    in the cloud, so Undo never loses the list's members.
 //  • Failed syncs retry with backoff, and when the device comes back online.
+function isDirty(list) {
+  const m = meta[list.id];
+  return !m || !m.at || !same(list, m.base);
+}
+
+function hasPending() {
+  return lists.some(isDirty) || Object.keys(removals).length > 0;
+}
+
 function setSyncState(state) {
   const dot = document.getElementById('syncDot');
   const label = document.getElementById('syncLabel');
@@ -180,7 +212,7 @@ function setSyncState(state) {
   dot.className = 'sync-dot' + (state === 'syncing' ? ' syncing' : state === 'error' ? ' error' : '');
   dot.title = state === 'ok' ? 'Saved to cloud ✓'
     : state === 'syncing' ? 'Syncing…'
-    : dirty ? 'Offline – changes are saved on this device and will sync later'
+    : hasPending() ? 'Offline – changes are saved on this device and will sync later'
     : 'Can\'t reach the cloud – retrying';
   if (label) label.textContent = state === 'error' ? 'Offline' : '';
 }
@@ -189,7 +221,7 @@ function localKey() { return 'checklister_' + currentUser.id; }
 
 function saveLocal() {
   try {
-    localStorage.setItem(localKey(), JSON.stringify({ v: 2, lists, base, baseUpdatedAt, dirty }));
+    localStorage.setItem(localKey(), JSON.stringify({ v: 3, lists, meta, removals, shareInfo }));
   } catch (e) {
     console.warn('Could not save to localStorage:', e);
   }
@@ -201,17 +233,27 @@ function loadLocal() {
   catch (e) { console.warn('Ignoring unreadable local data:', e); }
   if (Array.isArray(stored)) stored = { lists: stored }; // pre-v2 format: just the lists
   stored = stored || {};
-  lists = Array.isArray(stored.lists) ? stored.lists : [];
-  base = Array.isArray(stored.base) ? stored.base : [];
-  baseUpdatedAt = stored.baseUpdatedAt || null;
-  dirty = !!stored.dirty;
+  const obj = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+  meta = {}; removals = {}; shareInfo = {};
+  if (stored.v === 3) {
+    lists = Array.isArray(stored.lists) ? stored.lists : [];
+    meta = obj(stored.meta);
+    removals = obj(stored.removals);
+    shareInfo = obj(stored.shareInfo);
+  } else if (stored.dirty && Array.isArray(stored.lists)) {
+    // Old single-row format with edits that never reached the cloud: keep
+    // them, and merge them into the cloud lists on the first sync.
+    lists = stored.lists;
+    const oldBase = Array.isArray(stored.base) ? stored.base : [];
+    lists.forEach(l => { meta[l.id] = { base: oldBase.find(b => b.id === l.id) || null, at: null }; });
+  } else {
+    lists = []; // old format without pending edits: the cloud has it all
+  }
   fixActiveId();
 }
 
 // Called after every local edit.
 function scheduleSave() {
-  dirty = true;
-  editVersion++;
   saveLocal();
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => sync(), 600);
@@ -241,89 +283,159 @@ async function runSync({ pull }) {
   setSyncState('syncing');
   try {
     if (!cloudChecked || pull) await pullFromCloud(user);
-    if (dirty) await pushToCloud(user);
+    if (hasPending()) await pushToCloud(user);
     retryDelay = 2000;
     setSyncState('ok');
+    scheduleRemovals();
   } catch (e) {
     if (currentUser !== user) return; // logged out mid-sync
     console.warn('Sync failed:', e);
     setSyncState('error');
-    if (dirty || !cloudChecked) {
+    if (hasPending() || !cloudChecked) {
       retryTimer = setTimeout(() => sync(), retryDelay);
       retryDelay = Math.min(retryDelay * 2, 60000);
     }
   }
 }
 
+// Deletes still inside their Undo window: sync again once it has passed.
+function scheduleRemovals() {
+  clearTimeout(removalTimer);
+  const waits = Object.values(removals).map(r => r.at + UNDO_MS - Date.now());
+  if (waits.length) removalTimer = setTimeout(() => sync(), Math.max(0, Math.min(...waits)) + 50);
+}
+
 function checkSameUser(user) {
   if (currentUser !== user) throw new Error('Session changed during sync');
 }
 
+function rowToList(row) {
+  const d = row.data || {};
+  return { id: row.id, name: typeof d.name === 'string' ? d.name : 'List', items: Array.isArray(d.items) ? d.items : [] };
+}
+
 async function pullFromCloud(user) {
-  // Ordered + limit(1) rather than maybeSingle(), so leftover duplicate rows
-  // from an old bug can't make the load fail.
   const { data, error } = await supabaseClient
-    .from('checklists')
-    .select('data, updated_at')
-    .eq('user_id', user.id)
-    .order('updated_at', { ascending: false })
-    .limit(1);
+    .from('lists')
+    .select('id, data, updated_at, owner_id, list_members(user_id)')
+    .order('created_at');
   checkSameUser(user);
   if (error) throw error;
 
   lastPull = Date.now();
-  const before = stableStr(lists);
-  const row = data && data[0];
-  if (!row) {
-    // Nothing in the cloud yet: whatever is on this device gets uploaded.
-    base = [];
-    baseUpdatedAt = null;
-    if (lists.length) dirty = true;
-  } else if (row.updated_at !== baseUpdatedAt) {
-    const remote = Array.isArray(row.data) ? row.data : [];
-    lists = dirty ? mergeLists(base, lists, remote) : remote;
-    base = remote;
-    baseUpdatedAt = row.updated_at;
-  }
+  const before = stableStr(lists) + stableStr(shareInfo);
+  const remote = new Map(data.map(row => [row.id, row]));
+  const gone = [];
+  const next = [];
+  lists.forEach(l => {
+    const m = meta[l.id];
+    const row = remote.get(l.id);
+    if (!row) {
+      // It was in the cloud and now isn't: the owner deleted it, or we were
+      // removed from it. Never uploaded yet: it's new, keep it.
+      if (m && m.at) { delete meta[l.id]; gone.push(l.name); return; }
+      next.push(l);
+      return;
+    }
+    if (m && row.updated_at === m.at) { next.push(l); return; }
+    const r = rowToList(row);
+    // Copies, so editing the list can never change its base by accident.
+    next.push(clone(isDirty(l) ? mergeLists(m && m.base ? [m.base] : [], [l], [r])[0] : r));
+    meta[l.id] = { base: r, at: row.updated_at };
+  });
+  data.forEach(row => {
+    // New on another device, or just shared with us.
+    if (removals[row.id] || next.some(l => l.id === row.id)) return;
+    const r = rowToList(row);
+    next.push(clone(r));
+    meta[row.id] = { base: r, at: row.updated_at };
+  });
+  shareInfo = {};
+  data.forEach(row => {
+    shareInfo[row.id] = { mine: row.owner_id === user.id, members: (row.list_members || []).length || 1 };
+  });
+
+  lists = next;
   cloudChecked = true;
   saveLocal();
-  if (stableStr(lists) !== before) { fixActiveId(); render(); }
+  if (stableStr(lists) + stableStr(shareInfo) !== before) { fixActiveId(); render(); }
+  if (gone.length) showToast(`“${shorten(gone[0])}”${gone.length > 1 ? ` and ${gone.length - 1} more` : ''} was deleted or is no longer shared with you`);
 }
 
 async function pushToCloud(user) {
-  let conflict = false;
-  for (let attempt = 0; attempt < 3 && dirty; attempt++) {
-    const snapshot = JSON.parse(JSON.stringify(lists));
-    const version = editVersion;
-    const now = new Date().toISOString();
-    const res = baseUpdatedAt === null
-      ? await supabaseClient
-          .from('checklists')
-          .insert({ user_id: user.id, data: snapshot, updated_at: now })
-          .select('updated_at')
-      // Only overwrite the version we started from. If another device saved
-      // in the meantime, nothing matches and we merge instead.
-      : await supabaseClient
-          .from('checklists')
-          .update({ data: snapshot, updated_at: now })
-          .eq('user_id', user.id)
-          .eq('updated_at', baseUpdatedAt)
-          .select('updated_at');
-    checkSameUser(user);
-    const { data, error } = res;
-    if (error && error.code !== '23505') throw error; // 23505: row already exists
-
-    conflict = !!error || !data || !data.length;
-    if (conflict) {
-      await pullFromCloud(user); // merges the other device's version into ours
-    } else {
-      base = snapshot;
-      baseUpdatedAt = data[0].updated_at;
-      if (editVersion === version) dirty = false; // else: edited mid-push, go again
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let conflict = false;
+    for (const list of lists.filter(isDirty)) {
+      const snap = clone(list);
+      const data = { name: snap.name, items: snap.items };
+      const m = meta[snap.id];
+      const now = new Date().toISOString();
+      const res = !(m && m.at)
+        ? await supabaseClient
+            .from('lists')
+            .insert({ id: snap.id, data, updated_at: now })
+            .select('updated_at')
+        // Only overwrite the version we started from. If someone else saved
+        // in the meantime, nothing matches and we merge instead.
+        : await supabaseClient
+            .from('lists')
+            .update({ data, updated_at: now })
+            .eq('id', snap.id)
+            .eq('updated_at', m.at)
+            .select('updated_at');
+      checkSameUser(user);
+      if (res.error && res.error.code !== '23505') throw res.error; // 23505: already exists
+      if (res.error || !res.data || !res.data.length) { conflict = true; continue; }
+      meta[snap.id] = { base: snap, at: res.data[0].updated_at };
       saveLocal();
     }
+    await applyRemovals(user);
+    if (!conflict) return;
+    await pullFromCloud(user); // merges the other version in, then try again
   }
-  if (dirty && conflict) throw new Error('Cloud kept changing during save');
+  throw new Error('Lists kept changing during save');
+}
+
+async function applyRemovals(user) {
+  for (const [id, r] of Object.entries(removals)) {
+    if (Date.now() - r.at < UNDO_MS) continue;
+    const res = r.leave
+      ? await supabaseClient.from('list_members').delete().eq('list_id', id).eq('user_id', user.id)
+      : await supabaseClient.from('lists').delete().eq('id', id);
+    checkSameUser(user);
+    if (res.error) throw res.error;
+    delete removals[id];
+    delete meta[id];
+    delete shareInfo[id];
+    saveLocal();
+  }
+}
+
+// Live updates: when a list we can see (or its members) changes in the
+// cloud, pull. Also fires for our own saves; those pulls find nothing new.
+function startRealtime() {
+  stopRealtime();
+  const user = currentUser;
+  const onChange = () => {
+    clearTimeout(realtimeTimer);
+    realtimeTimer = setTimeout(() => { if (currentUser === user) sync({ pull: true }); }, 400);
+  };
+  try {
+    realtimeChannel = supabaseClient
+      .channel('lists-' + user.id)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'lists' }, onChange)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'list_members' }, onChange)
+      .subscribe();
+  } catch (e) {
+    console.warn('Live updates unavailable:', e);
+  }
+}
+
+function stopRealtime() {
+  clearTimeout(realtimeTimer);
+  if (!realtimeChannel) return;
+  try { supabaseClient.removeChannel(realtimeChannel); } catch (e) {}
+  realtimeChannel = null;
 }
 
 // Three-way merge of list sets. `base` is the cloud version both sides
@@ -363,6 +475,7 @@ function stableStr(v) {
   return JSON.stringify(v);
 }
 function same(a, b) { return stableStr(a) === stableStr(b); }
+function clone(v) { return JSON.parse(JSON.stringify(v)); }
 
 function fixActiveId() {
   if (!lists.some(l => l.id === activeId)) activeId = lists[0]?.id || null;
@@ -442,6 +555,7 @@ function renderTabs() {
     return `<button class="tab${active ? ' active' : ''}" data-action="switch-list" data-list="${id}"
       data-focus-key="tab:${id}" aria-pressed="${active}">
       ${escHtml(l.name)}
+      ${shareInfo[l.id]?.members > 1 ? '<span class="tab-shared" aria-hidden="true">👥</span><span class="sr-only">(shared)</span>' : ''}
       <span class="tab-badge">${l.items.length}</span>
     </button>`;
   }).join('') + `<button class="new-tab-btn" data-action="new-list">＋ New List</button>`;
@@ -476,6 +590,9 @@ function renderContent() {
 
 function getListHTML(list) {
   const { total, done, pct, allDone } = listStats(list);
+  const info = shareInfo[list.id];
+  const shared = info?.members > 1;
+  const leave = info?.mine === false;
   const isNewCard = list.id !== renderedListId;
   const lid = escHtml(list.id);
 
@@ -504,7 +621,9 @@ function getListHTML(list) {
     <div class="card-header">
       <input class="card-title-input" type="text" value="${escHtml(list.name)}"
         data-field="title" data-focus-key="title:${lid}" aria-label="List name">
-      <button class="del-list-btn" data-action="delete-list" title="Delete list" aria-label="Delete list">🗑</button>
+      <button class="share-btn${shared ? ' is-shared' : ''}" data-action="share-list" title="Share list"
+        aria-label="${shared ? `Shared with ${info.members - 1} other${info.members > 2 ? 's' : ''}. Share list` : 'Share list'}">👥${shared ? `<span class="share-count">${info.members}</span>` : ''}</button>
+      <button class="del-list-btn" data-action="delete-list" title="${leave ? 'Leave list' : 'Delete list'}" aria-label="${leave ? 'Leave list' : 'Delete list'}">${leave ? '🚪' : '🗑'}</button>
     </div>
     ${total > 0 ? `<div class="progress-wrap">
       <div class="progress-track" aria-hidden="true">
@@ -642,16 +761,25 @@ function renameList(listId, input) {
   renderTabs();
 }
 
+// Deleting a list you own removes it for everyone it's shared with; on a
+// list shared with you, the same button leaves it. Either way the cloud
+// isn't touched until the Undo window has passed (see applyRemovals).
 function deleteList(listId) {
   const index = lists.findIndex(l => l.id === listId);
   if (index < 0) return;
+  const info = shareInfo[listId];
+  const leave = info?.mine === false;
+  const others = info ? info.members - 1 : 0;
   const [list] = lists.splice(index, 1);
+  removals[listId] = { leave, at: Date.now() };
   activeId = lists[Math.min(index, lists.length - 1)]?.id || null;
   scheduleSave();
   render();
-  showToast(`Deleted list "${shorten(list.name)}"`, () => {
-    if (findList(list.id)) return;
-    lists.splice(Math.min(index, lists.length), 0, list);
+  const name = shorten(list.name);
+  showToast(leave ? `Left “${name}”` : others > 0 ? `Deleted “${name}” for everyone` : `Deleted list “${name}”`, () => {
+    if (!removals[listId]) return; // already done in the cloud
+    delete removals[listId];
+    if (!findList(list.id)) lists.splice(Math.min(index, lists.length), 0, list);
     activeId = list.id;
     scheduleSave();
     render();
@@ -740,6 +868,163 @@ function finishDrag(commit) {
   if (commit && d.to !== d.from) moveItem(d.listId, d.from, d.to);
 }
 
+// ─── SHARING ──────────────────────────────────────────────────────────
+// A list is shared with an invite link: the Share sheet makes a single-use
+// link (valid 7 days), and whoever opens it while logged in joins the list
+// as an editor (accept_invite in supabase-setup.sql). The owner can remove
+// people; everyone else can leave.
+let shareListId = null;
+let shareUrl = '';
+
+function randomCode() {
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  return [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function setShareNote(msg) { document.getElementById('shareNote').textContent = msg; }
+
+function openShareSheet(listId) {
+  const list = findList(listId);
+  if (!list) return;
+  shareListId = listId;
+  shareUrl = '';
+  document.getElementById('shareTitle').textContent = `Share “${shorten(list.name, 24)}”`;
+  document.getElementById('shareLinkRow').hidden = true;
+  document.getElementById('shareLinkInput').value = '';
+  document.getElementById('shareCreateBtn').hidden = false;
+  document.getElementById('shareCopyBtn').hidden = true;
+  document.getElementById('shareSendBtn').hidden = true;
+  setShareNote('');
+  renderMembers(null);
+  openSheet('shareOverlay', 'shareCreateBtn');
+  loadMembers(listId);
+}
+
+async function createInviteLink() {
+  const listId = shareListId;
+  const btn = document.getElementById('shareCreateBtn');
+  btn.disabled = true;
+  setShareNote('');
+  try {
+    // The list has to exist in the cloud before anyone can join it.
+    if (!meta[listId]?.at) await sync();
+    if (!meta[listId]?.at) throw new Error('This list hasn’t reached the cloud yet. Try again when you’re online.');
+    const code = randomCode();
+    const { error } = await supabaseClient.from('list_invites').insert({ code, list_id: listId });
+    if (error) throw error;
+    if (shareListId !== listId) return;
+    const url = new URL('./', location.href);
+    url.searchParams.set('invite', code);
+    shareUrl = url.href;
+    document.getElementById('shareLinkInput').value = shareUrl;
+    document.getElementById('shareLinkRow').hidden = false;
+    btn.hidden = true;
+    document.getElementById('shareCopyBtn').hidden = false;
+    document.getElementById('shareSendBtn').hidden = !navigator.share;
+    setShareNote('Works once, for 7 days. The other person needs a Checklister account.');
+    document.getElementById('shareCopyBtn').focus();
+  } catch (e) {
+    setShareNote('❌ ' + (e.message || 'Could not create the link'));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function copyInviteLink() {
+  try {
+    await navigator.clipboard.writeText(shareUrl);
+    setShareNote('Link copied ✓ Send it to the person you want to share with.');
+  } catch (e) {
+    const input = document.getElementById('shareLinkInput');
+    input.focus();
+    input.select();
+    setShareNote('Copy the selected link and send it to the person you want to share with.');
+  }
+}
+
+async function sendInviteLink() {
+  const list = findList(shareListId);
+  try {
+    await navigator.share({ title: 'Checklister', text: `Join my list “${list ? list.name : ''}” on Checklister`, url: shareUrl });
+  } catch (e) { /* share sheet closed */ }
+}
+
+async function loadMembers(listId) {
+  if (!meta[listId]?.at) { renderMembers([]); return; } // not in the cloud yet: just you
+  const { data, error } = await supabaseClient.rpc('list_members_with_email', { p_list_id: listId });
+  if (shareListId !== listId) return;
+  if (error) {
+    document.getElementById('memberList').innerHTML = '<li class="member-note">Couldn’t load who has access.</li>';
+    return;
+  }
+  renderMembers(data || []);
+}
+
+function renderMembers(members) {
+  const el = document.getElementById('memberList');
+  if (!members) { el.innerHTML = '<li class="member-note">Loading…</li>'; return; }
+  const owner = shareInfo[shareListId]?.mine !== false;
+  const rows = members.length ? members.map(m => {
+    const you = m.user_id === currentUser?.id;
+    return `<li class="member">
+      <span class="member-email">${escHtml(m.email || 'Unknown')}${you ? ' <em>(you)</em>' : ''}</span>
+      ${m.role === 'owner' ? '<span class="member-role">Owner</span>' : ''}
+      ${owner && !you ? `<button class="member-remove" data-action="remove-member" data-user="${escHtml(m.user_id)}">Remove</button>` : ''}
+    </li>`;
+  }).join('') : '<li class="member-note">Just you so far.</li>';
+  el.innerHTML = rows + (owner ? '' : '<li><button class="member-leave" data-action="leave-list">Leave this list</button></li>');
+}
+
+async function removeMember(userId) {
+  const listId = shareListId;
+  const { error } = await supabaseClient.from('list_members').delete().eq('list_id', listId).eq('user_id', userId);
+  if (error) { setShareNote('❌ ' + error.message); return; }
+  setShareNote('Removed. They no longer see this list.');
+  loadMembers(listId);
+  sync({ pull: true });
+}
+
+function hasPendingInvite() {
+  try { return !!sessionStorage.getItem('checklister_invite'); } catch (e) { return false; }
+}
+
+// After logging in from an invite link: join the list and open it.
+async function acceptPendingInvite() {
+  let code = null;
+  try { code = sessionStorage.getItem('checklister_invite'); } catch (e) {}
+  const user = currentUser;
+  if (!code || !user) return;
+  const { data: listId, error } = await supabaseClient.rpc('accept_invite', { p_code: code });
+  if (currentUser !== user) return;
+  if (error && /fetch|network|abort/i.test(error.message || '')) {
+    showToast('Couldn’t open the invite while offline. It’ll be tried again when you’re back online.');
+    return; // keep the code for the next try
+  }
+  try { sessionStorage.removeItem('checklister_invite'); } catch (e) {}
+  if (error) { showToast(error.message || 'Couldn’t open the invite'); return; }
+  await sync({ pull: true });
+  const list = findList(listId);
+  if (!list) { showToast('You joined the list. It will appear in a moment.'); return; }
+  activeId = list.id;
+  render();
+  showToast(`You joined “${shorten(list.name)}” 🎉`);
+}
+
+function setupShareEvents() {
+  document.getElementById('memberList').addEventListener('click', e => {
+    const btn = e.target.closest('button[data-action]');
+    if (!btn) return;
+    if (btn.dataset.action === 'remove-member') removeMember(btn.dataset.user);
+    else if (btn.dataset.action === 'leave-list') {
+      const listId = shareListId;
+      sheetReturnFocus = null;
+      closeSheet('shareOverlay');
+      deleteList(listId);
+    }
+  });
+}
+
 // ─── SHEETS ───────────────────────────────────────────────────────────
 // Bottom sheets ("New List", "Choose a new password") are dialogs: Escape
 // closes them, Tab stays inside, and focus goes back where it came from.
@@ -764,7 +1049,7 @@ function onSheetKeydown(e) {
   if (!overlay) return;
   if (e.key === 'Escape') { closeSheet(overlay.id); return; }
   if (e.key !== 'Tab') return;
-  const focusable = [...overlay.querySelectorAll('input:not([type="hidden"]):not([hidden]), button')];
+  const focusable = [...overlay.querySelectorAll('input:not([type="hidden"]), button')].filter(el => el.offsetParent !== null);
   const first = focusable[0], last = focusable[focusable.length - 1];
   if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
   else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
@@ -869,6 +1154,7 @@ function setupListEvents() {
       case 'add-item':    addItem(listId); break;
       case 'delete-item': deleteItem(listId, itemId); break;
       case 'delete-list': deleteList(listId); break;
+      case 'share-list':  openShareSheet(listId); break;
       case 'clear-done':  clearDone(listId); break;
       case 'retry':       sync({ pull: true }); break;
     }
@@ -951,6 +1237,7 @@ document.addEventListener('DOMContentLoaded', () => {
       onLoggedIn(data.session.user);
       if (authRedirect.get('type') === 'recovery') openPasswordSheet();
     } else {
+      if (hasPendingInvite()) showAuthSuccess('Log in to join the list you were invited to.');
       setTimeout(() => document.getElementById('emailInput').focus(), 100);
     }
   });
@@ -971,12 +1258,17 @@ document.addEventListener('DOMContentLoaded', () => {
   document.addEventListener('visibilitychange', () => {
     if (!currentUser) return;
     if (document.visibilityState === 'hidden') {
-      if (dirty) { clearTimeout(saveTimer); sync(); }
+      if (hasPending()) { clearTimeout(saveTimer); sync(); }
     } else if (Date.now() - lastPull > 5000) {
       sync({ pull: true });
     }
   });
-  window.addEventListener('online', () => { if (currentUser) sync({ pull: true }); });
+  window.addEventListener('online', () => {
+    if (!currentUser) return;
+    sync({ pull: true });
+    acceptPendingInvite();
+  });
+  setupShareEvents();
 });
 
 // Registered for everyone (not just after login) so the login screen also

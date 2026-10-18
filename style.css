@@ -470,3 +470,47 @@ h1, h2, h3, .display {
   position: absolute; width: 1px; height: 1px; overflow: hidden;
   clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap;
 }
+
+/* ── SHARING ── */
+.share-btn {
+  height: 32px; min-width: 32px; padding: 0 6px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center; gap: 3px;
+  border: none; background: none; cursor: pointer; border-radius: 10px;
+  font-size: 15px; color: var(--ink-soft); transition: background 0.18s;
+}
+.share-btn:hover { background: var(--mint-pale); }
+.share-btn.is-shared { background: var(--mint-pale); }
+.share-count { font-size: 12px; font-weight: 800; color: var(--accent-text); }
+.tab-shared { font-size: 12px; margin-left: -2px; }
+
+.modal { max-height: 90vh; overflow-y: auto; }
+.sheet-text { font-size: 14px; font-weight: 600; color: var(--ink-soft); line-height: 1.5; margin: -6px 0 16px; }
+.sheet-note { font-size: 13px; font-weight: 700; color: var(--accent-text); line-height: 1.4; margin: 10px 0 0; min-height: 1em; }
+.sheet-note:empty { display: none; }
+.share-link { font-size: 14px; font-family: ui-monospace, Menlo, Consolas, monospace; color: var(--ink-soft); }
+.sheet-subtitle {
+  font-family: 'Baloo 2', sans-serif; font-size: 14px; font-weight: 700; color: var(--ink-soft);
+  margin: 22px 0 8px;
+}
+.member-list { list-style: none; margin-bottom: 18px; }
+.member {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 0; border-bottom: 1.5px solid var(--row-border);
+  font-size: 14px; font-weight: 700;
+}
+.member:last-child { border-bottom: none; }
+.member-email { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member-email em { font-style: normal; color: var(--ink-soft); font-weight: 600; }
+.member-role {
+  flex-shrink: 0; font-size: 11px; font-weight: 800; color: var(--accent-text);
+  background: var(--mint-pale); border-radius: var(--r-pill); padding: 2px 8px;
+}
+.member-note { font-size: 14px; font-weight: 600; color: var(--ink-soft); padding: 6px 0; }
+.member-remove, .member-leave {
+  flex-shrink: 0; border: none; background: none; cursor: pointer;
+  padding: 5px 10px; border-radius: var(--r-pill);
+  font-family: 'Nunito', sans-serif; font-size: 13px; font-weight: 800; color: var(--coral-deep);
+}
+.member-leave { margin-top: 8px; padding: 8px 0; }
+.member-remove:hover, .member-leave:hover { background: var(--coral-pale); }
+.member-leave:hover { padding: 8px 10px; margin-left: -10px; }

@@ -61,7 +61,21 @@ Known limits:
 Not done (still open):
 - Reordering lists (tabs). The horizontal tab strip scrolls, so dragging there needs a different gesture.
 - A manual light/dark switch (dark mode only follows the device for now).
-- Live sync between open devices via Supabase Realtime. It needs Realtime turned on for `checklists` in the dashboard; the app would then call `sync({ pull: true })` on each change.
 - The empty, untracked `package-lock.json`: delete it, or add a real `package.json` with lint/format scripts.
 
 Known limit: if two devices reorder the same list at the same time, the order from whichever saved first is kept. Items are never lost, only that device's ordering.
+
+## ✅ Sharing lists (done, branch `data-safety`)
+
+- **Data model:** each list is now its own row in `lists`, with `list_members` saying who can access it (`owner` / `editor`). `supabase-setup.sql` part 2 creates the tables, RLS policies, column-level grants (members can't change a list's owner or id) and the functions, and migrates existing lists from `checklists` once per user.
+- **Sync per list:** the Phase A rules now apply to each list separately. A list with no confirmed cloud version, or one that differs from it, gets uploaded; uploads only overwrite the version they were based on; conflicts are three-way merged. Local storage moved to format v3, and older formats upgrade automatically: offline edits saved in the old format are merged in.
+- **Invites:** 👥 → "Create invite link" makes a random 128-bit, single-use code valid for 7 days (`list_invites`). Opening `…/?invite=CODE` remembers the code through login, then `accept_invite()` adds the user as an editor.
+- **People:** the Share sheet lists members with their emails (`list_members_with_email()`, visible to members only). The owner can remove people; others can leave.
+- **Deleting / leaving** waits out the Undo window before it reaches the cloud, so Undo never loses the members. Deleting a shared list removes it for everyone; the other people get a message.
+- **Live updates** via Supabase Realtime on `lists` and `list_members` (enabled by the SQL script); any change triggers a pull.
+- Fixed along the way: a list loaded from the cloud shared one object with its stored cloud version, so edits could look already saved. Phase A had a milder form of the same issue in its merge.
+
+Known limits:
+- The person you invite needs an account first (there's no sign-up).
+- List order (tabs) is kept per device; lists shared with you are added at the end.
+- Realtime delete events aren't filtered by RLS in Supabase, so every signed-in client gets a "something was deleted" ping (no list contents) and does a quick pull.

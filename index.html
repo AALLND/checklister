@@ -98,6 +98,28 @@
   </div>
 </div>
 
+<div class="overlay" id="shareOverlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
+    <div class="modal-handle"></div>
+    <h3 id="shareTitle">Share list</h3>
+    <p class="sheet-text">Send an invite link to someone. When they open it and log in, they can see and edit this list with you.</p>
+    <div id="shareLinkRow" hidden>
+      <input class="modal-input share-link" id="shareLinkInput" type="text" readonly aria-label="Invite link">
+    </div>
+    <div class="modal-btns">
+      <button type="button" class="btn-create" id="shareCreateBtn" onclick="createInviteLink()">Create invite link</button>
+      <button type="button" class="btn-create" id="shareCopyBtn" onclick="copyInviteLink()" hidden>Copy link</button>
+      <button type="button" class="btn-cancel" id="shareSendBtn" onclick="sendInviteLink()" hidden>Send…</button>
+    </div>
+    <p class="sheet-note" id="shareNote" aria-live="polite"></p>
+    <h4 class="sheet-subtitle">People with access</h4>
+    <ul class="member-list" id="memberList"></ul>
+    <div class="modal-btns">
+      <button type="button" class="btn-cancel" onclick="closeSheet('shareOverlay')">Done</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <div class="sr-only" id="srStatus" aria-live="polite"></div>
 
