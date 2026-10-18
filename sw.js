@@ -8,10 +8,10 @@
 //  • Supabase API calls and non-GET requests are never touched.
 //
 // Bump CACHE only when PRECACHE changes. Code changes don't need a bump.
-const CACHE = 'checklister-v7';
+const CACHE = 'checklister-v8';
 const NETWORK_TIMEOUT = 4000;
 const SUPABASE_JS = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js';
-const FONTS_CSS = 'https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap';
+const FONTS_CSS = 'https://fonts.googleapis.com/css2?family=Baloo+2:wght@600;700&family=Nunito:wght@400;600;700;800&display=swap';
 const PRECACHE = [
   './',
   './index.html',

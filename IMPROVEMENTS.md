@@ -61,7 +61,6 @@ Known limits:
 Not done (still open):
 - Reordering lists (tabs). The horizontal tab strip scrolls, so dragging there needs a different gesture.
 - A manual light/dark switch (dark mode only follows the device for now).
-- The empty, untracked `package-lock.json`: delete it, or add a real `package.json` with lint/format scripts.
 
 Known limit: if two devices reorder the same list at the same time, the order from whichever saved first is kept. Items are never lost, only that device's ordering.
 
@@ -74,8 +73,17 @@ Known limit: if two devices reorder the same list at the same time, the order fr
 - **Deleting / leaving** waits out the Undo window before it reaches the cloud, so Undo never loses the members. Deleting a shared list removes it for everyone; the other people get a message.
 - **Live updates** via Supabase Realtime on `lists` and `list_members` (enabled by the SQL script); any change triggers a pull.
 - Fixed along the way: a list loaded from the cloud shared one object with its stored cloud version, so edits could look already saved. Phase A had a milder form of the same issue in its merge.
+- The setup script handles an old-style `lists` table left over from an early app version (one row "main", no access rules, readable with the public key): it renames it to `lists_legacy`, keeps the data and locks it with RLS.
 
 Known limits:
 - The person you invite needs an account first (there's no sign-up).
 - List order (tabs) is kept per device; lists shared with you are added at the end.
 - Realtime delete events aren't filtered by RLS in Supabase, so every signed-in client gets a "something was deleted" ping (no list contents) and does a quick pull.
+
+## ✅ Code cleanup (October 2026)
+
+- `index.html` has no inline `onclick` / `onsubmit` handlers any more. The login, "New List" and "Choose a new password" sheets are real `<form>`s, so Enter submits them natively (this replaced three hand-written Enter-key handlers). Cancel / Not now / Done buttons carry `data-close-sheet`, and the rest are wired up in `setupPageEvents()`.
+- All per-session state is declared in one block and reset by `resetSessionState()`, used at startup and on logout, so new state only needs adding in one place.
+- Small duplications folded: `showMessage()` for the error/success boxes, `MIN_PW` for the password length, `pendingInvite()` / `INVITE_KEY` for the remembered invite, `listStats()` for the subtitle, and one loop over the pulled rows.
+- Removed: the unused `.lock-input.error` style and `shake` animation, the unused `#modalConfirm` id, an inline style, and the empty `package-lock.json`.
+- Kept on purpose: the legacy storage and database migration code, until every device has opened the sharing version.

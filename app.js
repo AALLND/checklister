@@ -20,10 +20,11 @@ function fetchWithTimeout(url, opts = {}) {
 const authRedirect = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
 
 // An invite link (?invite=…) is remembered until the user has logged in.
+const INVITE_KEY = 'checklister_invite';
 (function rememberInvite() {
   const code = new URLSearchParams(location.search).get('invite');
   if (!code) return;
-  try { sessionStorage.setItem('checklister_invite', code); } catch (e) {}
+  try { sessionStorage.setItem(INVITE_KEY, code); } catch (e) {}
   history.replaceState(null, '', location.pathname + location.hash);
 })();
 
@@ -31,25 +32,49 @@ const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, 
   global: { fetch: fetchWithTimeout }
 });
 
-let lists = [];
-let activeId = null;
-let appInited = false;
-let currentUser = null;
-
+// Per-session state, set up by resetSessionState() at startup and again on
+// logout, so a new piece of state only has to be added in one place.
+//
 // Sync state, per list. meta[id] = { base, at }: `base` is the last version
 // of that list we know is in the cloud and `at` its row's `updated_at`. A
 // list that differs from its base (or has none yet) has edits to upload.
 // `removals` holds lists deleted or left on this device, done in the cloud
 // once their Undo window has passed. `shareInfo` comes from the last pull.
-let meta = {};
-let removals = {};          // id → { leave, at }
-let shareInfo = {};         // id → { mine, members }
-let cloudChecked = false;   // loaded from the cloud at least once this session
-let lastPull = 0;
+let currentUser, appInited, lists, activeId;
+let meta;
+let removals;               // id → { leave, at }
+let shareInfo;              // id → { mine, members }
+let cloudChecked;           // loaded from the cloud at least once this session
+let lastPull, retryDelay;
+let renderedListId;         // list whose card is on screen
+let justAddedId;            // item to animate in on the next render
+let addDrafts;              // unsent "Add something…" text, per list
+let shareListId, shareUrl;  // list open in the Share sheet, and its invite link
+
+const RETRY_START_MS = 2000;
+
+function resetSessionState() {
+  currentUser = null;
+  appInited = false;
+  lists = [];
+  activeId = null;
+  meta = {};
+  removals = {};
+  shareInfo = {};
+  cloudChecked = false;
+  lastPull = 0;
+  retryDelay = RETRY_START_MS;
+  renderedListId = null;
+  justAddedId = null;
+  addDrafts = {};
+  shareListId = null;
+  shareUrl = '';
+}
+resetSessionState();
+
 let saveTimer = null;
 let retryTimer = null;
 let removalTimer = null;
-let retryDelay = 2000;
 let syncChain = Promise.resolve();
 let syncQueued = null;      // options for the run waiting in syncChain, if any
 let realtimeChannel = null;
@@ -60,23 +85,27 @@ const UNDO_MS = 6500;       // a little longer than the Undo toast is shown
 // Log in only: there is no sign-up in the app. Accounts are added by hand in
 // the Supabase dashboard, and public sign-ups are switched off there (see
 // README), since hiding the form alone wouldn't stop the API from creating them.
+const MIN_PW = 6; // Supabase's default minimum password length
+
+// Shows a message in a .lock-error / .lock-success box.
+function showMessage(el, msg) {
+  el.textContent = msg;
+  el.classList.add('show');
+}
+
 function hideAuthMessages() {
   document.getElementById('authError').classList.remove('show');
   document.getElementById('authSuccess').classList.remove('show');
 }
 
 function showAuthError(msg) {
-  const el = document.getElementById('authError');
-  el.textContent = '❌ ' + msg;
-  el.classList.add('show');
-  document.getElementById('authSuccess').classList.remove('show');
+  hideAuthMessages();
+  showMessage(document.getElementById('authError'), '❌ ' + msg);
 }
 
 function showAuthSuccess(msg) {
-  const el = document.getElementById('authSuccess');
-  el.textContent = '✅ ' + msg;
-  el.classList.add('show');
-  document.getElementById('authError').classList.remove('show');
+  hideAuthMessages();
+  showMessage(document.getElementById('authSuccess'), '✅ ' + msg);
 }
 
 async function submitAuth() {
@@ -86,7 +115,7 @@ async function submitAuth() {
   const btn = document.getElementById('authBtn');
 
   if (!email || !pw) { showAuthError('Enter an email and password'); return; }
-  if (pw.length < 6) { showAuthError('Password must be at least 6 characters'); return; }
+  if (pw.length < MIN_PW) { showAuthError(`Password must be at least ${MIN_PW} characters`); return; }
 
   btn.disabled = true;
   try {
@@ -127,18 +156,7 @@ function resetToLoginScreen() {
   clearTimeout(retryTimer);
   clearTimeout(removalTimer);
   stopRealtime();
-  currentUser = null;
-  lists = [];
-  activeId = null;
-  meta = {};
-  removals = {};
-  shareInfo = {};
-  cloudChecked = false;
-  retryDelay = 2000;
-  appInited = false;
-  renderedListId = null;
-  justAddedId = null;
-  addDrafts = {};
+  resetSessionState();
   hideToast();
   closeModal();
   closeSheet('pwOverlay');
@@ -284,7 +302,7 @@ async function runSync({ pull }) {
   try {
     if (!cloudChecked || pull) await pullFromCloud(user);
     if (hasPending()) await pushToCloud(user);
-    retryDelay = 2000;
+    retryDelay = RETRY_START_MS;
     setSyncState('ok');
     scheduleRemovals();
   } catch (e) {
@@ -343,16 +361,14 @@ async function pullFromCloud(user) {
     next.push(clone(isDirty(l) ? mergeLists(m && m.base ? [m.base] : [], [l], [r])[0] : r));
     meta[l.id] = { base: r, at: row.updated_at };
   });
+  shareInfo = {};
   data.forEach(row => {
+    shareInfo[row.id] = { mine: row.owner_id === user.id, members: (row.list_members || []).length || 1 };
     // New on another device, or just shared with us.
     if (removals[row.id] || next.some(l => l.id === row.id)) return;
     const r = rowToList(row);
     next.push(clone(r));
     meta[row.id] = { base: r, at: row.updated_at };
-  });
-  shareInfo = {};
-  data.forEach(row => {
-    shareInfo[row.id] = { mine: row.owner_id === user.id, members: (row.list_members || []).length || 1 };
   });
 
   lists = next;
@@ -412,13 +428,43 @@ async function applyRemovals(user) {
 }
 
 // Live updates: when a list we can see (or its members) changes in the
-// cloud, pull. Also fires for our own saves; those pulls find nothing new.
+// cloud, pull. Events we already know about are skipped: the echo of our own
+// save, and deletes of lists we don't have (Supabase sends every client all
+// delete events, see IMPROVEMENTS.md). Events are checked when the short
+// wait is over, so an echo that beats our save's own response is still
+// recognised.
+let realtimePending = [];
+
+function isKnownChange(p) {
+  if (p.table !== 'lists') return false; // member changes always pull
+  if (p.eventType === 'DELETE') {
+    const id = p.old && p.old.id;
+    return !!id && !findList(id) && !meta[id];
+  }
+  const row = p.new;
+  return !!row && !!meta[row.id] && sameTime(meta[row.id].at, row.updated_at);
+}
+
+// Realtime and the REST API may format the same timestamptz differently.
+function sameTime(a, b) {
+  return a === b || (!!a && !!b && Date.parse(a) === Date.parse(b));
+}
+
 function startRealtime() {
   stopRealtime();
   const user = currentUser;
-  const onChange = () => {
+  const onChange = payload => {
+    realtimePending.push(payload);
     clearTimeout(realtimeTimer);
-    realtimeTimer = setTimeout(() => { if (currentUser === user) sync({ pull: true }); }, 400);
+    realtimeTimer = setTimeout(() => {
+      const events = realtimePending;
+      realtimePending = [];
+      if (currentUser !== user) return;
+      // The save that caused an echo may still be in flight: check once it's done.
+      syncChain.then(() => {
+        if (currentUser === user && !events.every(isKnownChange)) sync({ pull: true });
+      });
+    }, 400);
   };
   try {
     realtimeChannel = supabaseClient
@@ -433,6 +479,7 @@ function startRealtime() {
 
 function stopRealtime() {
   clearTimeout(realtimeTimer);
+  realtimePending = [];
   if (!realtimeChannel) return;
   try { supabaseClient.removeChannel(realtimeChannel); } catch (e) {}
   realtimeChannel = null;
@@ -498,10 +545,6 @@ function listStats(list) {
 // only play when a list is first shown or an item was just added, and the
 // focused field (with any half-typed text) survives the rebuild. Ticking a
 // checkbox doesn't rebuild anything; see toggleItem().
-let renderedListId = null; // list whose card is on screen
-let justAddedId = null;    // item to animate in on the next render
-let addDrafts = {};        // unsent "Add something…" text, per list
-
 function render() {
   if (drag) finishDrag(false); // e.g. another device's changes arrived mid-drag
   const focus = captureFocus();
@@ -530,9 +573,9 @@ function updateSubtitle() {
   const sub = document.getElementById('subtitle');
   if (!sub) return;
   if (!lists.length) { sub.textContent = 'Start by creating a list 💫'; return; }
-  const total = lists.reduce((a,l) => a + l.items.length, 0);
-  const done  = lists.reduce((a,l) => a + l.items.filter(i=>i.done).length, 0);
-  sub.textContent = total ? `${done} of ${total} done ${done===total && total>0 ? '🎉':''}`.trim() : 'Add some items!';
+  let total = 0, done = 0;
+  lists.forEach(l => { const s = listStats(l); total += s.total; done += s.done; });
+  sub.textContent = total ? `${done} of ${total} done ${done === total ? '🎉' : ''}`.trim() : 'Add some items!';
 }
 
 function updateProgress(list) {
@@ -541,7 +584,6 @@ function updateProgress(list) {
   if (fill) { fill.style.width = pct + '%'; fill.classList.toggle('full', allDone); }
   const label = document.querySelector('.progress-label');
   if (label) label.textContent = pct + '%';
-  document.querySelector('.all-done-banner')?.classList.toggle('show', allDone);
   const clear = document.querySelector('.clear-done-btn');
   if (clear) clear.hidden = !done;
 }
@@ -623,7 +665,7 @@ function getListHTML(list) {
         data-field="title" data-focus-key="title:${lid}" aria-label="List name">
       <button class="share-btn${shared ? ' is-shared' : ''}" data-action="share-list" title="Share list"
         aria-label="${shared ? `Shared with ${info.members - 1} other${info.members > 2 ? 's' : ''}. Share list` : 'Share list'}">👥${shared ? `<span class="share-count">${info.members}</span>` : ''}</button>
-      <button class="del-list-btn" data-action="delete-list" title="${leave ? 'Leave list' : 'Delete list'}" aria-label="${leave ? 'Leave list' : 'Delete list'}">${leave ? '🚪' : '🗑'}</button>
+      <button class="del-list-btn" data-action="delete-list" title="${leave ? 'Leave list' : 'Delete list'}" aria-label="${leave ? 'Leave list' : 'Delete list'}">${leave ? 'Leave' : 'Delete'}</button>
     </div>
     ${total > 0 ? `<div class="progress-wrap">
       <div class="progress-track" aria-hidden="true">
@@ -633,7 +675,6 @@ function getListHTML(list) {
       <button class="clear-done-btn" data-action="clear-done" ${done ? '' : 'hidden'}>Clear done</button>
     </div>` : ''}
     <ul class="items-list">${itemsHtml}</ul>
-    <div class="all-done-banner ${allDone?'show':''}">🎊 All done! You're amazing!</div>
     <div class="add-row">
       <span class="add-row-icon" aria-hidden="true">🌸</span>
       <input class="add-input" id="newItemInput" type="text" placeholder="Add something…" maxlength="100"
@@ -873,16 +914,15 @@ function finishDrag(commit) {
 // link (valid 7 days), and whoever opens it while logged in joins the list
 // as an editor (accept_invite in supabase-setup.sql). The owner can remove
 // people; everyone else can leave.
-let shareListId = null;
-let shareUrl = '';
-
 function randomCode() {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   return [...bytes].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-function setShareNote(msg) { document.getElementById('shareNote').textContent = msg; }
+function setShareNote(msg, isError) {
+  document.getElementById('shareNote').textContent = (isError ? '❌ ' : '') + msg;
+}
 
 function openShareSheet(listId) {
   const list = findList(listId);
@@ -925,7 +965,7 @@ async function createInviteLink() {
     setShareNote('Works once, for 7 days. The other person needs a Checklister account.');
     document.getElementById('shareCopyBtn').focus();
   } catch (e) {
-    setShareNote('❌ ' + (e.message || 'Could not create the link'));
+    setShareNote(e.message || 'Could not create the link', true);
   } finally {
     btn.disabled = false;
   }
@@ -979,20 +1019,20 @@ function renderMembers(members) {
 async function removeMember(userId) {
   const listId = shareListId;
   const { error } = await supabaseClient.from('list_members').delete().eq('list_id', listId).eq('user_id', userId);
-  if (error) { setShareNote('❌ ' + error.message); return; }
+  if (error) { setShareNote(error.message, true); return; }
   setShareNote('Removed. They no longer see this list.');
   loadMembers(listId);
   sync({ pull: true });
 }
 
-function hasPendingInvite() {
-  try { return !!sessionStorage.getItem('checklister_invite'); } catch (e) { return false; }
+// The invite code remembered by rememberInvite(), or null.
+function pendingInvite() {
+  try { return sessionStorage.getItem(INVITE_KEY); } catch (e) { return null; }
 }
 
 // After logging in from an invite link: join the list and open it.
 async function acceptPendingInvite() {
-  let code = null;
-  try { code = sessionStorage.getItem('checklister_invite'); } catch (e) {}
+  const code = pendingInvite();
   const user = currentUser;
   if (!code || !user) return;
   const { data: listId, error } = await supabaseClient.rpc('accept_invite', { p_code: code });
@@ -1001,7 +1041,7 @@ async function acceptPendingInvite() {
     showToast('Couldn’t open the invite while offline. It’ll be tried again when you’re back online.');
     return; // keep the code for the next try
   }
-  try { sessionStorage.removeItem('checklister_invite'); } catch (e) {}
+  try { sessionStorage.removeItem(INVITE_KEY); } catch (e) {}
   if (error) { showToast(error.message || 'Couldn’t open the invite'); return; }
   await sync({ pull: true });
   const list = findList(listId);
@@ -1112,7 +1152,7 @@ async function saveNewPassword() {
   const pw = document.getElementById('newPwInput').value;
   const err = document.getElementById('pwError');
   err.classList.remove('show');
-  if (pw.length < 6) { err.textContent = '❌ Password must be at least 6 characters'; err.classList.add('show'); return; }
+  if (pw.length < MIN_PW) { showMessage(err, `❌ Password must be at least ${MIN_PW} characters`); return; }
   const btn = document.getElementById('pwSaveBtn');
   btn.disabled = true;
   try {
@@ -1122,8 +1162,7 @@ async function saveNewPassword() {
     closeSheet('pwOverlay');
     showToast('Password updated ✓');
   } catch (e) {
-    err.textContent = '❌ ' + (e.message || 'Could not update the password');
-    err.classList.add('show');
+    showMessage(err, '❌ ' + (e.message || 'Could not update the password'));
   } finally {
     btn.disabled = false;
   }
@@ -1215,15 +1254,29 @@ function setupListEvents() {
   });
 }
 
+// The fixed buttons and forms in index.html. The forms are real <form>s, so
+// Enter in a field submits them and Enter on another button just presses it.
+function setupPageEvents() {
+  const onSubmit = (id, fn) => document.getElementById(id).addEventListener('submit', e => { e.preventDefault(); fn(); });
+  const onClick = (id, fn) => document.getElementById(id).addEventListener('click', () => fn());
+  onSubmit('authForm', submitAuth);
+  onSubmit('newListForm', confirmModal);
+  onSubmit('pwForm', saveNewPassword);
+  onClick('togglePwBtn', togglePwVisibility);
+  onClick('forgotBtn', sendPasswordReset);
+  onClick('logoutBtn', logOut);
+  onClick('shareCreateBtn', createInviteLink);
+  onClick('shareCopyBtn', copyInviteLink);
+  onClick('shareSendBtn', sendInviteLink);
+  document.querySelectorAll('[data-close-sheet]').forEach(b => b.addEventListener('click', () => closeSheet(b.closest('.overlay').id)));
+  document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e => { if (e.target === o) closeSheet(o.id); }));
+  document.addEventListener('keydown', onSheetKeydown);
+}
+
 // ─── STARTUP ──────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   setupListEvents();
-  document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e => { if (e.target === o) closeSheet(o.id); }));
-  document.getElementById('modalInput').addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.isComposing) confirmModal(); });
-  document.getElementById('newPwInput').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) saveNewPassword(); });
-  document.addEventListener('keydown', onSheetKeydown);
-  // Enter in a field submits; Enter on a button (eye, "Forgot password?") just presses it.
-  document.getElementById('authForm').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.tagName === 'INPUT') submitAuth(); });
+  setupPageEvents();
 
   const redirectError = authRedirect.get('error_description');
   if (redirectError) {
@@ -1237,7 +1290,8 @@ document.addEventListener('DOMContentLoaded', () => {
       onLoggedIn(data.session.user);
       if (authRedirect.get('type') === 'recovery') openPasswordSheet();
     } else {
-      if (hasPendingInvite()) showAuthSuccess('Log in to join the list you were invited to.');
+      document.documentElement.classList.remove('has-session'); // saved session had expired
+      if (pendingInvite()) showAuthSuccess('Log in to join the list you were invited to.');
       setTimeout(() => document.getElementById('emailInput').focus(), 100);
     }
   });
