@@ -74,6 +74,7 @@ Known limit: if two devices reorder the same list at the same time, the order fr
 - **Deleting / leaving** waits out the Undo window before it reaches the cloud, so Undo never loses the members. Deleting a shared list removes it for everyone; the other people get a message.
 - **Live updates** via Supabase Realtime on `lists` and `list_members` (enabled by the SQL script); any change triggers a pull.
 - Fixed along the way: a list loaded from the cloud shared one object with its stored cloud version, so edits could look already saved. Phase A had a milder form of the same issue in its merge.
+- The setup script handles an old-style `lists` table left over from an early app version (one row "main", no access rules, readable with the public key): it renames it to `lists_legacy`, keeps the data and locks it with RLS.
 
 Known limits:
 - The person you invite needs an account first (there's no sign-up).
