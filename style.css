@@ -204,6 +204,9 @@ h1, h2, h3, .display {
 
 /* ── APP (hidden until logged in) ── */
 #appWrapper { display: none; animation: unlockFade 0.4s ease; }
+/* Set before first paint when a saved session exists (inline script in index.html). */
+.has-session #authScreen { display: none; }
+.has-session #appWrapper { display: block; }
 @keyframes unlockFade { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
 
 .header {

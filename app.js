@@ -412,13 +412,43 @@ async function applyRemovals(user) {
 }
 
 // Live updates: when a list we can see (or its members) changes in the
-// cloud, pull. Also fires for our own saves; those pulls find nothing new.
+// cloud, pull. Events we already know about are skipped: the echo of our own
+// save, and deletes of lists we don't have (Supabase sends every client all
+// delete events, see IMPROVEMENTS.md). Events are checked when the short
+// wait is over, so an echo that beats our save's own response is still
+// recognised.
+let realtimePending = [];
+
+function isKnownChange(p) {
+  if (p.table !== 'lists') return false; // member changes always pull
+  if (p.eventType === 'DELETE') {
+    const id = p.old && p.old.id;
+    return !!id && !findList(id) && !meta[id];
+  }
+  const row = p.new;
+  return !!row && !!meta[row.id] && sameTime(meta[row.id].at, row.updated_at);
+}
+
+// Realtime and the REST API may format the same timestamptz differently.
+function sameTime(a, b) {
+  return a === b || (!!a && !!b && Date.parse(a) === Date.parse(b));
+}
+
 function startRealtime() {
   stopRealtime();
   const user = currentUser;
-  const onChange = () => {
+  const onChange = payload => {
+    realtimePending.push(payload);
     clearTimeout(realtimeTimer);
-    realtimeTimer = setTimeout(() => { if (currentUser === user) sync({ pull: true }); }, 400);
+    realtimeTimer = setTimeout(() => {
+      const events = realtimePending;
+      realtimePending = [];
+      if (currentUser !== user) return;
+      // The save that caused an echo may still be in flight: check once it's done.
+      syncChain.then(() => {
+        if (currentUser === user && !events.every(isKnownChange)) sync({ pull: true });
+      });
+    }, 400);
   };
   try {
     realtimeChannel = supabaseClient
@@ -433,6 +463,7 @@ function startRealtime() {
 
 function stopRealtime() {
   clearTimeout(realtimeTimer);
+  realtimePending = [];
   if (!realtimeChannel) return;
   try { supabaseClient.removeChannel(realtimeChannel); } catch (e) {}
   realtimeChannel = null;
@@ -1237,6 +1268,7 @@ document.addEventListener('DOMContentLoaded', () => {
       onLoggedIn(data.session.user);
       if (authRedirect.get('type') === 'recovery') openPasswordSheet();
     } else {
+      document.documentElement.classList.remove('has-session'); // saved session had expired
       if (hasPendingInvite()) showAuthSuccess('Log in to join the list you were invited to.');
       setTimeout(() => document.getElementById('emailInput').focus(), 100);
     }
