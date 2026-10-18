@@ -209,6 +209,8 @@ h1, h2, h3, .display {
 .sync-dot.syncing { background: #F0C36B; animation: pulse 0.8s infinite; }
 .sync-dot.error   { background: var(--coral-deep); }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+.sync-label { font-size: 11px; font-weight: 800; color: var(--coral-deep); margin-left: -5px; }
+.sync-label:empty { display: none; }
 
 .tabs-scroll { display: flex; gap: 8px; padding: 0 20px 18px; overflow-x: auto; scrollbar-width: none; }
 .tabs-scroll::-webkit-scrollbar { display: none; }
@@ -321,6 +323,11 @@ h1, h2, h3, .display {
 .no-lists .nl-icon { font-size: 56px; margin-bottom: 14px; }
 .no-lists h2 { font-size: 20px; font-weight: 700; color: var(--ink); margin-bottom: 8px; }
 .no-lists p { font-size: 14px; color: var(--ink-soft); font-weight: 600; line-height: 1.6; }
+.retry-btn {
+  margin-top: 18px; padding: 10px 22px; border-radius: var(--r-pill);
+  border: 2px solid var(--mint); background: var(--mint-pale); color: var(--mint-deep);
+  font-family: 'Baloo 2', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer;
+}
 
 .loading-screen {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
