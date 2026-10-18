@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Checklister</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="./icon-192.png">
@@ -11,10 +11,15 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Checklister">
-<meta name="theme-color" content="#3FBE9F">
+<meta name="theme-color" content="#3FBE9F" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1D1A1A" media="(prefers-color-scheme: dark)">
+<meta name="color-scheme" content="light dark">
 <link href="https://fonts.googleapis.com/css2?family=Baloo+2:wght@500;600;700&family=Nunito:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<!-- Pinned with an integrity hash: when upgrading, update the version here and in sw.js, and the hash. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.2/dist/umd/supabase.js"
+  integrity="sha384-Rj26LVGvoeRVR6+mwQmFfcR3QOBEwT+ZmuCWpuiqeTzJpCs0ER4ITAWGb4Hiy3Ok"
+  crossorigin="anonymous"></script>
 </head>
 <body>
 
@@ -22,14 +27,9 @@
 <div id="authScreen">
   <div class="lock-blob"><img src="./logo.png" alt="Checklister"></div>
   <h1 class="lock-title">Check<span>lister</span></h1>
-  <p class="lock-sub" id="authSub">Log in to see your lists 🔒</p>
+  <p class="lock-sub">Log in to see your lists 🔒</p>
 
   <div class="lock-card">
-    <div class="auth-tabs">
-      <button class="auth-tab active" id="tabLogin" onclick="setAuthTab('login')">Log in</button>
-      <button class="auth-tab" id="tabSignup" onclick="setAuthTab('signup')">Sign up</button>
-    </div>
-
     <form id="authForm" onsubmit="return false;">
       <div class="lock-label">✉️ Email</div>
       <input class="lock-input" type="email" id="emailInput" placeholder="you@example.com" autocomplete="email" style="margin-bottom:16px;">
@@ -37,8 +37,10 @@
       <div class="lock-label">🔑 Password</div>
       <div class="lock-input-wrap">
         <input class="lock-input" type="password" id="pwInput" placeholder="At least 6 characters" autocomplete="current-password">
-        <button type="button" class="toggle-pw" id="togglePwBtn" onclick="togglePwVisibility()" title="Show/hide password">👁</button>
+        <button type="button" class="toggle-pw" id="togglePwBtn" onclick="togglePwVisibility()" title="Show/hide password" aria-label="Show password" aria-pressed="false">👁</button>
       </div>
+
+      <button type="button" class="forgot-link" id="forgotBtn" onclick="sendPasswordReset()">Forgot password?</button>
 
       <div class="lock-error" id="authError"></div>
       <div class="lock-success" id="authSuccess"></div>
@@ -57,26 +59,69 @@
       <div class="logo-blob"><img src="./logo.png" alt="Checklister"></div>
       <h1>Check<span>lister</span></h1>
       <div class="sync-dot" id="syncDot" title="Sync status"></div>
-      <button class="lock-icon-btn" onclick="logOut()" title="Log out">🔒</button>
+      <span class="sync-label" id="syncLabel" aria-live="polite"></span>
+      <button class="lock-icon-btn" onclick="logOut()" title="Log out" aria-label="Log out">🔒</button>
     </div>
     <p class="header-sub" id="subtitle">Connecting…</p>
   </div>
 
-  <div class="tabs-scroll" id="listTabs"></div>
+  <div class="tabs-scroll" id="listTabs" role="group" aria-label="Lists"></div>
   <div class="content" id="mainContent"></div>
 </div>
 
 <div class="overlay" id="overlay">
-  <div class="modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <div class="modal-handle"></div>
     <h3 id="modalTitle">New List</h3>
-    <input class="modal-input" type="text" id="modalInput" placeholder="e.g. 🛒 Shopping, 📄 Documents…" maxlength="40" autocomplete="off">
+    <input class="modal-input" type="text" id="modalInput" placeholder="e.g. 🛒 Shopping, 📄 Documents…" maxlength="40" autocomplete="off" aria-label="List name">
     <div class="modal-btns">
       <button class="btn-cancel" onclick="closeModal()">Cancel</button>
       <button class="btn-create" id="modalConfirm" onclick="confirmModal()">Create</button>
     </div>
   </div>
 </div>
+
+<div class="overlay" id="pwOverlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pwTitle">
+    <div class="modal-handle"></div>
+    <h3 id="pwTitle">Choose a new password 🔑</h3>
+    <form onsubmit="return false;">
+      <!-- Lets password managers save the new password against the right account. -->
+      <input type="text" id="pwUsername" autocomplete="username" hidden>
+      <input class="modal-input" type="password" id="newPwInput" placeholder="At least 6 characters" autocomplete="new-password" aria-label="New password">
+      <div class="lock-error" id="pwError"></div>
+      <div class="modal-btns">
+        <button type="button" class="btn-cancel" onclick="closeSheet('pwOverlay')">Not now</button>
+        <button type="button" class="btn-create" id="pwSaveBtn" onclick="saveNewPassword()">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="overlay" id="shareOverlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="shareTitle">
+    <div class="modal-handle"></div>
+    <h3 id="shareTitle">Share list</h3>
+    <p class="sheet-text">Send an invite link to someone. When they open it and log in, they can see and edit this list with you.</p>
+    <div id="shareLinkRow" hidden>
+      <input class="modal-input share-link" id="shareLinkInput" type="text" readonly aria-label="Invite link">
+    </div>
+    <div class="modal-btns">
+      <button type="button" class="btn-create" id="shareCreateBtn" onclick="createInviteLink()">Create invite link</button>
+      <button type="button" class="btn-create" id="shareCopyBtn" onclick="copyInviteLink()" hidden>Copy link</button>
+      <button type="button" class="btn-cancel" id="shareSendBtn" onclick="sendInviteLink()" hidden>Send…</button>
+    </div>
+    <p class="sheet-note" id="shareNote" aria-live="polite"></p>
+    <h4 class="sheet-subtitle">People with access</h4>
+    <ul class="member-list" id="memberList"></ul>
+    <div class="modal-btns">
+      <button type="button" class="btn-cancel" onclick="closeSheet('shareOverlay')">Done</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="sr-only" id="srStatus" aria-live="polite"></div>
 
 <script src="app.js"></script>
 </body>
