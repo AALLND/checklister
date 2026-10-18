@@ -1,7 +1,7 @@
 # Improvement plan
 
 Findings from a review of the app (October 2026), grouped into phases.
-Phase A is done; the rest are queued.
+Phases A and B are done; the rest are queued.
 
 ## ✅ Phase A: Data safety (done, branch `data-safety`)
 
@@ -13,23 +13,20 @@ Phase A is done; the rest are queued.
 - Corrupt localStorage no longer prevents the app from starting.
 - The app shows this device's copy immediately on start, and an "Offline" label when it can't reach the cloud.
 - `supabase-setup.sql` documents the schema, the one-row-per-user constraint and the RLS policies.
-- Service worker cache bumped to `checklister-v6` so installed apps pick up the new code (still manual until Phase B).
 
 Known limits:
 - A delete only "sticks" in a merge if the other device didn't edit the same item.
 - Two tabs on the same device share one localStorage copy. Each tab's cloud writes are still conflict-checked.
 
-## Phase B: PWA and updates
+## ✅ Phase B: PWA and updates (done, branch `data-safety`)
 
-1. **Service worker strategy** (`sw.js`): everything is served cache-first, so users stay on old code until `CACHE` is bumped by hand.
-   - HTML, JS and CSS: network-first with cache fallback.
-   - Images, icons and fonts: stale-while-revalidate.
-   - Never intercept Supabase API calls (`*.supabase.co`) or non-GET requests.
-   - Drop the need to bump `CACHE` on every deploy (only bump it when the precache list changes).
-2. **Robust precache**: `cache.addAll` is all-or-nothing and its errors are swallowed. Cache each asset on its own, and cache the Google Fonts `woff2` files at runtime so offline text renders correctly. Cache `./` as well as `./index.html`.
-3. **Register the service worker at page load**, not only after login, so the login screen also works offline.
-4. **Pin the Supabase script** to an exact version (e.g. `@supabase/supabase-js@2.x.y`) with an SRI `integrity` hash. Today `@2` floats and could change under the app.
-5. Optional: show an "Update available, tap to reload" toast when a new service worker is waiting.
+- `sw.js` is now network-first for app files (HTML, JS, CSS, manifest), with a cache fallback when offline or when the network takes longer than 4 s. New deploys show up on the next load, and `CACHE` only needs a bump when the precache list changes.
+- Pinned CDN files and font files are cache-first. Images and the Google Fonts stylesheet are served from cache and refreshed in the background. Supabase API calls and non-GET requests are never intercepted.
+- Each precache file is cached on its own, so one failure no longer breaks the whole offline copy. Font `woff2` files are cached at runtime, and `./` is precached alongside `./index.html`.
+- The service worker is registered at page load, so the login screen works offline too.
+- `supabase-js` is pinned to `2.117.2` with an SRI hash. To upgrade, change the version in `index.html` and `sw.js`, and recompute the hash:
+  `curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A`
+- Skipped: the "update available" toast. With network-first loading the app is already current on every load, so it isn't needed.
 
 ## Phase C: UX and accessibility
 

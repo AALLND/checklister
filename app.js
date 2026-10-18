@@ -171,9 +171,6 @@ function initApp() {
     </div>`;
   }
   sync().then(() => { if (currentUser === user) render(); });
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('./sw.js').catch(console.warn);
-  }
 }
 
 // ─── SYNC ─────────────────────────────────────────────────────────────
@@ -594,4 +591,12 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
   window.addEventListener('online', () => { if (currentUser) sync({ pull: true }); });
+});
+
+// Registered for everyone (not just after login) so the login screen also
+// works offline. Waits for `load` so it doesn't compete with the first paint.
+window.addEventListener('load', () => {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').catch(console.warn);
+  }
 });
