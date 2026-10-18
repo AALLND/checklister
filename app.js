@@ -15,6 +15,10 @@ function fetchWithTimeout(url, opts = {}) {
   return fetch(url, { ...opts, signal: ctrl.signal }).finally(() => clearTimeout(timer));
 }
 
+// Read before supabase-js consumes the URL: a password-reset email links
+// back here with "type=recovery" in the hash, or an error if it expired.
+const authRedirect = new URLSearchParams(location.hash.slice(1) || location.search.slice(1));
+
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY, {
   global: { fetch: fetchWithTimeout }
 });
@@ -53,6 +57,7 @@ function setAuthTab(mode) {
   // browsers offer to autofill an old saved password on the signup form
   // instead of letting them create a new one.
   document.getElementById('pwInput').autocomplete = mode === 'signup' ? 'new-password' : 'current-password';
+  document.getElementById('forgotBtn').hidden = mode !== 'login';
   hideAuthMessages();
 }
 
@@ -146,6 +151,7 @@ function resetToLoginScreen() {
   addDrafts = {};
   hideToast();
   closeModal();
+  closeSheet('pwOverlay');
   setSyncState('ok');
   document.getElementById('appWrapper').style.display = 'none';
   document.getElementById('authScreen').style.display = 'flex';
@@ -410,6 +416,7 @@ let justAddedId = null;    // item to animate in on the next render
 let addDrafts = {};        // unsent "Add something…" text, per list
 
 function render() {
+  if (drag) finishDrag(false); // e.g. another device's changes arrived mid-drag
   const focus = captureFocus();
   renderTabs();
   renderContent();
@@ -442,12 +449,14 @@ function updateSubtitle() {
 }
 
 function updateProgress(list) {
-  const { pct, allDone } = listStats(list);
+  const { done, pct, allDone } = listStats(list);
   const fill = document.querySelector('.progress-fill');
   if (fill) { fill.style.width = pct + '%'; fill.classList.toggle('full', allDone); }
   const label = document.querySelector('.progress-label');
   if (label) label.textContent = pct + '%';
   document.querySelector('.all-done-banner')?.classList.toggle('show', allDone);
+  const clear = document.querySelector('.clear-done-btn');
+  if (clear) clear.hidden = !done;
 }
 
 function renderTabs() {
@@ -492,7 +501,7 @@ function renderContent() {
 }
 
 function getListHTML(list) {
-  const { total, pct, allDone } = listStats(list);
+  const { total, done, pct, allDone } = listStats(list);
   const isNewCard = list.id !== renderedListId;
   const lid = escHtml(list.id);
 
@@ -500,6 +509,8 @@ function getListHTML(list) {
     const iid = escHtml(item.id);
     const animate = isNewCard || item.id === justAddedId;
     return `<li class="item-row${animate ? ' slide-in' : ''}" data-item="${iid}">
+      <button class="drag-handle" data-focus-key="drag:${iid}" title="Drag to reorder"
+        aria-label="Reorder ${escHtml(item.text)}. Use the up and down arrow keys.">⋮⋮</button>
       <label class="cb-wrap">
         <input type="checkbox" data-action="toggle" data-focus-key="cb:${iid}" aria-label="${escHtml(item.text)}" ${item.done ? 'checked' : ''}>
         <div class="cb-box" aria-hidden="true"><span class="tick">✓</span></div>
@@ -526,6 +537,7 @@ function getListHTML(list) {
         <div class="progress-fill ${allDone?'full':''}" style="width:${pct}%"></div>
       </div>
       <span class="progress-label">${pct}%</span>
+      <button class="clear-done-btn" data-action="clear-done" ${done ? '' : 'hidden'}>Clear done</button>
     </div>` : ''}
     <ul class="items-list">${itemsHtml}</ul>
     <div class="all-done-banner ${allDone?'show':''}">🎊 All done! You're amazing!</div>
@@ -618,6 +630,32 @@ function deleteItem(listId, itemId) {
   });
 }
 
+// Removes all ticked items; Undo puts them back where they were, keeping
+// anything added in the meantime.
+function clearDone(listId) {
+  const list = findList(listId);
+  if (!list) return;
+  const before = list.items.slice();
+  const removed = before.filter(i => i.done);
+  if (!removed.length) return;
+  list.items = before.filter(i => !i.done);
+  scheduleSave();
+  render();
+  showToast(`Cleared ${removed.length} done item${removed.length === 1 ? '' : 's'}`, () => {
+    const l = findList(listId);
+    if (!l) return;
+    const current = new Map(l.items.map(i => [i.id, i]));
+    const removedIds = new Set(removed.map(i => i.id));
+    const restored = before
+      .filter(i => current.has(i.id) || removedIds.has(i.id))
+      .map(i => current.get(i.id) || i);
+    l.items.forEach(i => { if (!before.some(b => b.id === i.id)) restored.push(i); });
+    l.items = restored;
+    scheduleSave();
+    render();
+  });
+}
+
 function renameList(listId, input) {
   const list = findList(listId);
   if (!list) return;
@@ -646,22 +684,124 @@ function deleteList(listId) {
   });
 }
 
-let modalReturnFocus = null;
+// ─── REORDER ──────────────────────────────────────────────────────────
+// Items move by dragging the ⋮⋮ handle, or with the arrow keys while the
+// handle is focused. While dragging, the row follows the finger and the
+// rows it passes slide out of the way; the list is only re-rendered on drop.
+let drag = null;
+
+function moveItem(listId, from, to) {
+  const list = findList(listId);
+  if (!list || from === to || from < 0 || to < 0 || to >= list.items.length) return;
+  const [item] = list.items.splice(from, 1);
+  list.items.splice(to, 0, item);
+  scheduleSave();
+  render();
+  announce(`Moved "${shorten(item.text)}" to position ${to + 1} of ${list.items.length}`);
+}
+
+// Screen-reader-only status line (#srStatus).
+function announce(msg) {
+  const el = document.getElementById('srStatus');
+  if (!el) return;
+  el.textContent = '';
+  setTimeout(() => { el.textContent = msg; }, 50);
+}
+
+function startDrag(e, handle) {
+  if (drag || e.button !== 0) return;
+  const row = handle.closest('.item-row');
+  const listEl = row.parentElement;
+  const rows = [...listEl.querySelectorAll('.item-row')];
+  const from = rows.indexOf(row);
+  drag = {
+    listId: handle.closest('[data-list]').dataset.list,
+    pointerId: e.pointerId, row, rows, listEl, from, to: from,
+    startY: e.clientY, lastY: e.clientY, startScroll: window.scrollY,
+    // Row midpoints in page coordinates, so scrolling mid-drag doesn't throw them off.
+    mids: rows.map(r => { const b = r.getBoundingClientRect(); return b.top + window.scrollY + b.height / 2; }),
+    step: row.getBoundingClientRect().height,
+    scrollTimer: null
+  };
+  handle.setPointerCapture(e.pointerId);
+  row.classList.add('dragging');
+  listEl.classList.add('reordering');
+  e.preventDefault();
+}
+
+function updateDrag() {
+  const d = drag;
+  const dy = d.lastY - d.startY + (window.scrollY - d.startScroll);
+  d.row.style.transform = `translateY(${dy}px)`;
+  const center = d.mids[d.from] + dy;
+  d.to = d.mids.filter((m, i) => i !== d.from && m < center).length;
+  d.rows.forEach((r, i) => {
+    if (i === d.from) return;
+    const shift = d.from < d.to && i > d.from && i <= d.to ? -d.step
+      : d.from > d.to && i >= d.to && i < d.from ? d.step : 0;
+    r.style.transform = shift ? `translateY(${shift}px)` : '';
+  });
+}
+
+function moveDrag(e) {
+  if (!drag || e.pointerId !== drag.pointerId) return;
+  drag.lastY = e.clientY;
+  updateDrag();
+  // Near the top (below the sticky header) or bottom of the screen, keep
+  // scrolling so items can be dragged past what's visible.
+  const top = (document.querySelector('.header')?.getBoundingClientRect().bottom || 0) + 40;
+  const speed = e.clientY < top ? -8 : e.clientY > innerHeight - 60 ? 8 : 0;
+  clearInterval(drag.scrollTimer);
+  if (speed) drag.scrollTimer = setInterval(() => { window.scrollBy(0, speed); updateDrag(); }, 16);
+}
+
+function finishDrag(commit) {
+  const d = drag;
+  if (!d) return;
+  drag = null;
+  clearInterval(d.scrollTimer);
+  d.rows.forEach(r => { r.style.transform = ''; });
+  d.row.classList.remove('dragging');
+  d.listEl.classList.remove('reordering');
+  if (commit && d.to !== d.from) moveItem(d.listId, d.from, d.to);
+}
+
+// ─── SHEETS ───────────────────────────────────────────────────────────
+// Bottom sheets ("New List", "Choose a new password") are dialogs: Escape
+// closes them, Tab stays inside, and focus goes back where it came from.
+let sheetReturnFocus = null;
+
+function openSheet(id, focusId) {
+  sheetReturnFocus = document.activeElement;
+  document.getElementById(id).classList.add('open');
+  setTimeout(() => document.getElementById(focusId)?.focus(), 300);
+}
+
+function closeSheet(id) {
+  const overlay = document.getElementById(id);
+  if (!overlay || !overlay.classList.contains('open')) return;
+  overlay.classList.remove('open');
+  if (sheetReturnFocus && document.contains(sheetReturnFocus)) sheetReturnFocus.focus();
+  sheetReturnFocus = null;
+}
+
+function onSheetKeydown(e) {
+  const overlay = document.querySelector('.overlay.open');
+  if (!overlay) return;
+  if (e.key === 'Escape') { closeSheet(overlay.id); return; }
+  if (e.key !== 'Tab') return;
+  const focusable = [...overlay.querySelectorAll('input:not([type="hidden"]):not([hidden]), button')];
+  const first = focusable[0], last = focusable[focusable.length - 1];
+  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+}
 
 function openModal() {
-  modalReturnFocus = document.activeElement;
   document.getElementById('modalInput').value = '';
-  document.getElementById('overlay').classList.add('open');
-  setTimeout(()=>document.getElementById('modalInput').focus(), 300);
+  openSheet('overlay', 'modalInput');
 }
 
-function closeModal() {
-  const overlay = document.getElementById('overlay');
-  if (!overlay.classList.contains('open')) return;
-  overlay.classList.remove('open');
-  if (modalReturnFocus && document.contains(modalReturnFocus)) modalReturnFocus.focus();
-  modalReturnFocus = null;
-}
+function closeModal() { closeSheet('overlay'); }
 
 function confirmModal() {
   const name = document.getElementById('modalInput').value.trim();
@@ -671,21 +811,63 @@ function confirmModal() {
   activeId = l.id;
   scheduleSave();
   render();
-  modalReturnFocus = null;
+  sheetReturnFocus = null;
   closeModal();
   document.getElementById('newItemInput')?.focus(); // next step: add the first item
 }
 
-// Keyboard support inside the "New List" sheet: Escape closes it and Tab
-// stays within it.
-function onModalKeydown(e) {
-  if (!document.getElementById('overlay').classList.contains('open')) return;
-  if (e.key === 'Escape') { closeModal(); return; }
-  if (e.key !== 'Tab') return;
-  const focusable = [...document.querySelectorAll('#overlay input, #overlay button')];
-  const first = focusable[0], last = focusable[focusable.length - 1];
-  if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-  else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+// ─── PASSWORD RESET ───────────────────────────────────────────────────
+// "Forgot password?" emails a link back to this page. Opening it signs the
+// user in with a recovery session, and we ask for a new password.
+async function sendPasswordReset() {
+  hideAuthMessages();
+  const emailEl = document.getElementById('emailInput');
+  const email = emailEl.value.trim();
+  if (!email) { showAuthError('Enter your email above first'); emailEl.focus(); return; }
+  const btn = document.getElementById('forgotBtn');
+  btn.disabled = true;
+  try {
+    const { error } = await supabaseClient.auth.resetPasswordForEmail(email, {
+      redirectTo: new URL('./', location.href).href
+    });
+    if (error) throw error;
+    // Same message whether or not the account exists, so the form can't be
+    // used to find out who has an account.
+    showAuthSuccess('If there\'s an account for that email, a reset link is on its way.');
+  } catch (e) {
+    showAuthError(e.message || 'Could not send the reset email');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function openPasswordSheet() {
+  if (document.getElementById('pwOverlay').classList.contains('open')) return;
+  document.getElementById('newPwInput').value = '';
+  document.getElementById('pwError').classList.remove('show');
+  document.getElementById('pwUsername').value = currentUser?.email || '';
+  openSheet('pwOverlay', 'newPwInput');
+}
+
+async function saveNewPassword() {
+  const pw = document.getElementById('newPwInput').value;
+  const err = document.getElementById('pwError');
+  err.classList.remove('show');
+  if (pw.length < 6) { err.textContent = '❌ Password must be at least 6 characters'; err.classList.add('show'); return; }
+  const btn = document.getElementById('pwSaveBtn');
+  btn.disabled = true;
+  try {
+    const { error } = await supabaseClient.auth.updateUser({ password: pw });
+    if (error) throw error;
+    sheetReturnFocus = null;
+    closeSheet('pwOverlay');
+    showToast('Password updated ✓');
+  } catch (e) {
+    err.textContent = '❌ ' + (e.message || 'Could not update the password');
+    err.classList.add('show');
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 // One listener per container instead of inline handlers in the generated
@@ -713,6 +895,7 @@ function setupListEvents() {
       case 'add-item':    addItem(listId); break;
       case 'delete-item': deleteItem(listId, itemId); break;
       case 'delete-list': deleteList(listId); break;
+      case 'clear-done':  clearDone(listId); break;
       case 'retry':       sync({ pull: true }); break;
     }
   });
@@ -734,7 +917,22 @@ function setupListEvents() {
     else if (field === 'title') renameList(listId, e.target);
   });
 
+  main.addEventListener('pointerdown', e => {
+    const handle = e.target.closest('.drag-handle');
+    if (handle) startDrag(e, handle);
+  });
+  main.addEventListener('pointermove', moveDrag);
+  main.addEventListener('pointerup', e => { if (drag && e.pointerId === drag.pointerId) finishDrag(true); });
+  main.addEventListener('pointercancel', e => { if (drag && e.pointerId === drag.pointerId) finishDrag(false); });
+
   main.addEventListener('keydown', e => {
+    if (e.target.classList.contains('drag-handle') && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      const { listId, itemId } = ids(e.target);
+      const from = findList(listId)?.items.findIndex(i => i.id === itemId) ?? -1;
+      moveItem(listId, from, from + (e.key === 'ArrowUp' ? -1 : 1));
+      return;
+    }
     const field = e.target.dataset.field;
     if (!field || e.isComposing) return;
     const { listId, itemId } = ids(e.target);
@@ -760,26 +958,37 @@ function setupListEvents() {
 // ─── STARTUP ──────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   setupListEvents();
-  document.getElementById('overlay').addEventListener('click', function(e){ if(e.target===this) closeModal(); });
+  document.querySelectorAll('.overlay').forEach(o => o.addEventListener('click', e => { if (e.target === o) closeSheet(o.id); }));
   document.getElementById('modalInput').addEventListener('keydown', e=>{ if(e.key==='Enter' && !e.isComposing) confirmModal(); });
-  document.addEventListener('keydown', onModalKeydown);
-  document.getElementById('authForm').addEventListener('keydown', e => { if (e.key === 'Enter') submitAuth(); });
+  document.getElementById('newPwInput').addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) saveNewPassword(); });
+  document.addEventListener('keydown', onSheetKeydown);
+  // Enter in a field submits; Enter on a button (eye, "Forgot password?") just presses it.
+  document.getElementById('authForm').addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.tagName === 'INPUT') submitAuth(); });
+
+  const redirectError = authRedirect.get('error_description');
+  if (redirectError) {
+    showAuthError(redirectError.replace(/\+/g, ' ') + '. You can request a new link below.');
+    history.replaceState(null, '', location.pathname);
+  }
 
   // Restore an existing session (e.g. page refresh) without re-prompting login.
   supabaseClient.auth.getSession().then(({ data }) => {
     if (data.session) {
       onLoggedIn(data.session.user);
+      if (authRedirect.get('type') === 'recovery') openPasswordSheet();
     } else {
       setTimeout(() => document.getElementById('emailInput').focus(), 100);
     }
   });
 
-  // Fixed: previously only cleared `currentUser`, leaving the app screen
-  // visible with a "logged-in" UI that could no longer actually save or
-  // load anything. Now it fully resets the screen, same as a manual logout.
+  // Every way a session ends goes through resetToLoginScreen(), so the app
+  // never stays on screen without a user.
   supabaseClient.auth.onAuthStateChange((event, session) => {
     if (event === 'SIGNED_OUT') {
       resetToLoginScreen();
+    } else if (event === 'PASSWORD_RECOVERY' && session) {
+      if (!currentUser) onLoggedIn(session.user);
+      openPasswordSheet();
     }
   });
 

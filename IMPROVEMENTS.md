@@ -1,7 +1,7 @@
 # Improvement plan
 
 Findings from a review of the app (October 2026), grouped into phases.
-Phases A, B and C are done; Phase D is queued.
+All four phases are done; a few optional items remain at the end of Phase D.
 
 ## ✅ Phase A: Data safety (done, branch `data-safety`)
 
@@ -45,11 +45,22 @@ Known limits:
 - **Blank text:** clearing an item's text or a list's name puts the saved text back on blur. Escape throws away an edit. Leaving a field unchanged no longer triggers a save.
 - **Code hygiene:** the generated HTML has no inline `onclick="fn('${id}')"` handlers any more. One delegated listener per container reads `data-list` / `data-item`, and `escHtml` also escapes `'`.
 
-## Phase D: New features
+## ✅ Phase D: New features (done, branch `data-safety`)
 
-- Forgot password / reset via `supabase.auth.resetPasswordForEmail`.
-- Reorder items (drag handle or long-press) and reorder lists.
-- "Clear completed" action per list.
-- Dark mode (`prefers-color-scheme`), reusing the existing CSS variables.
-- Optional: live sync between open devices via Supabase Realtime on the `checklists` row.
-- Housekeeping: README with setup steps, remove the empty `package-lock.json` (or add a real `package.json` with lint/format scripts), and use meaningful commit messages instead of "Update code".
+- **Forgot password:** a "Forgot password?" link on the login tab emails a reset link (`resetPasswordForEmail`, redirecting back to the app). Opening the link signs the user in and shows a "Choose a new password" sheet (`updateUser`). An expired link shows a clear error on the login screen. The success message is the same whether or not the account exists.
+  - Needs the app's URL in Supabase → Authentication → URL Configuration → Redirect URLs (see README).
+- **Clear done:** a "Clear done" button on the progress row removes all ticked items. Undo puts them back in place and keeps anything added since.
+- **Dark mode:** follows the device setting (`prefers-color-scheme`). Every hard-coded colour is now a CSS variable, with warm dark counterparts for the mint, coral and sand palette. The browser bar colour (`theme-color`) matches the scheme.
+- **Reorder items:**
+  - Drag the ⋮⋮ handle; the page auto-scrolls near the screen edges.
+  - With the handle focused, the up and down arrow keys move the item. Screen readers hear the new position.
+- **Shared sheets:** "New List" and "Choose a new password" use the same dialog behaviour (Escape, Tab trap, focus return).
+- README now has setup steps.
+
+Not done (still open):
+- Reordering lists (tabs). The horizontal tab strip scrolls, so dragging there needs a different gesture.
+- A manual light/dark switch (dark mode only follows the device for now).
+- Live sync between open devices via Supabase Realtime. It needs Realtime turned on for `checklists` in the dashboard; the app would then call `sync({ pull: true })` on each change.
+- The empty, untracked `package-lock.json`: delete it, or add a real `package.json` with lint/format scripts.
+
+Known limit: if two devices reorder the same list at the same time, the order from whichever saved first is kept. Items are never lost, only that device's ordering.

@@ -2,6 +2,17 @@
 
 A small installable checklist app (PWA). Plain HTML, CSS and JavaScript with no build step. Lists sync between devices through [Supabase](https://supabase.com).
 
+## Setup
+
+1. **Database:** in the Supabase SQL editor, run [`supabase-setup.sql`](supabase-setup.sql). It creates the `checklists` table, the one-row-per-user constraint and the Row Level Security policies.
+2. **Password reset links:** in Supabase → Authentication → URL Configuration, add the app's address to **Redirect URLs** (for example `https://<user>.github.io/checklister/`), and `http://localhost:5173/` for local testing. Without this, reset emails link to the Site URL instead of the app.
+3. **Hosting:** serve the folder as static files (GitHub Pages works as-is). No build step.
+4. **Local development:** run any static server in the folder, for example `npx serve -l 5173`, and open `http://localhost:5173/`.
+
+Supabase's built-in email sender only allows a few emails per hour. For real use, set up custom SMTP under Authentication → Emails.
+
+To upgrade `supabase-js`, change the pinned version in both `index.html` and `sw.js`, and recompute the `integrity` hash (see `IMPROVEMENTS.md`, Phase B).
+
 ## About the Supabase key in `app.js`
 
 `app.js` contains the Supabase project URL and a **publishable** key (`sb_publishable_…`). It's meant to be public:
