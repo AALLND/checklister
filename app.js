@@ -572,7 +572,6 @@ function updateProgress(list) {
   if (fill) { fill.style.width = pct + '%'; fill.classList.toggle('full', allDone); }
   const label = document.querySelector('.progress-label');
   if (label) label.textContent = pct + '%';
-  document.querySelector('.all-done-banner')?.classList.toggle('show', allDone);
   const clear = document.querySelector('.clear-done-btn');
   if (clear) clear.hidden = !done;
 }
@@ -654,7 +653,7 @@ function getListHTML(list) {
         data-field="title" data-focus-key="title:${lid}" aria-label="List name">
       <button class="share-btn${shared ? ' is-shared' : ''}" data-action="share-list" title="Share list"
         aria-label="${shared ? `Shared with ${info.members - 1} other${info.members > 2 ? 's' : ''}. Share list` : 'Share list'}">👥${shared ? `<span class="share-count">${info.members}</span>` : ''}</button>
-      <button class="del-list-btn" data-action="delete-list" title="${leave ? 'Leave list' : 'Delete list'}" aria-label="${leave ? 'Leave list' : 'Delete list'}">${leave ? '🚪' : '🗑'}</button>
+      <button class="del-list-btn" data-action="delete-list" title="${leave ? 'Leave list' : 'Delete list'}" aria-label="${leave ? 'Leave list' : 'Delete list'}">${leave ? 'Leave' : 'Delete'}</button>
     </div>
     ${total > 0 ? `<div class="progress-wrap">
       <div class="progress-track" aria-hidden="true">
@@ -664,7 +663,6 @@ function getListHTML(list) {
       <button class="clear-done-btn" data-action="clear-done" ${done ? '' : 'hidden'}>Clear done</button>
     </div>` : ''}
     <ul class="items-list">${itemsHtml}</ul>
-    <div class="all-done-banner ${allDone?'show':''}">🎊 All done! You're amazing!</div>
     <div class="add-row">
       <span class="add-row-icon" aria-hidden="true">🌸</span>
       <input class="add-input" id="newItemInput" type="text" placeholder="Add something…" maxlength="100"
