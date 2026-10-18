@@ -44,22 +44,22 @@
   <p class="lock-sub">Log in to see your lists 🔒</p>
 
   <div class="lock-card">
-    <form id="authForm" onsubmit="return false;">
+    <form id="authForm" novalidate>
       <div class="lock-label">✉️ Email</div>
-      <input class="lock-input" type="email" id="emailInput" placeholder="you@example.com" autocomplete="email" style="margin-bottom:16px;">
+      <input class="lock-input" type="email" id="emailInput" placeholder="you@example.com" autocomplete="email">
 
       <div class="lock-label">🔑 Password</div>
       <div class="lock-input-wrap">
         <input class="lock-input" type="password" id="pwInput" placeholder="At least 6 characters" autocomplete="current-password">
-        <button type="button" class="toggle-pw" id="togglePwBtn" onclick="togglePwVisibility()" title="Show/hide password" aria-label="Show password" aria-pressed="false">👁</button>
+        <button type="button" class="toggle-pw" id="togglePwBtn" title="Show/hide password" aria-label="Show password" aria-pressed="false">👁</button>
       </div>
 
-      <button type="button" class="forgot-link" id="forgotBtn" onclick="sendPasswordReset()">Forgot password?</button>
+      <button type="button" class="forgot-link" id="forgotBtn">Forgot password?</button>
 
       <div class="lock-error" id="authError"></div>
       <div class="lock-success" id="authSuccess"></div>
 
-      <button type="button" class="lock-btn" id="authBtn" onclick="submitAuth()">Log in 🔓</button>
+      <button type="submit" class="lock-btn" id="authBtn">Log in 🔓</button>
     </form>
   </div>
 
@@ -74,7 +74,7 @@
       <h1>Check<span>lister</span></h1>
       <div class="sync-dot" id="syncDot" title="Sync status"></div>
       <span class="sync-label" id="syncLabel" aria-live="polite"></span>
-      <button class="lock-icon-btn" onclick="logOut()" title="Log out" aria-label="Log out">Logout</button>
+      <button class="lock-icon-btn" id="logoutBtn" title="Log out" aria-label="Log out">Logout</button>
     </div>
     <p class="header-sub" id="subtitle">Connecting…</p>
   </div>
@@ -87,11 +87,13 @@
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
     <div class="modal-handle"></div>
     <h3 id="modalTitle">New List</h3>
-    <input class="modal-input" type="text" id="modalInput" placeholder="e.g. 🛒 Shopping, 📄 Documents…" maxlength="40" autocomplete="off" aria-label="List name">
-    <div class="modal-btns">
-      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
-      <button class="btn-create" id="modalConfirm" onclick="confirmModal()">Create</button>
-    </div>
+    <form id="newListForm" novalidate>
+      <input class="modal-input" type="text" id="modalInput" placeholder="e.g. 🛒 Shopping, 📄 Documents…" maxlength="40" autocomplete="off" aria-label="List name">
+      <div class="modal-btns">
+        <button type="button" class="btn-cancel" data-close-sheet>Cancel</button>
+        <button type="submit" class="btn-create">Create</button>
+      </div>
+    </form>
   </div>
 </div>
 
@@ -99,14 +101,14 @@
   <div class="modal" role="dialog" aria-modal="true" aria-labelledby="pwTitle">
     <div class="modal-handle"></div>
     <h3 id="pwTitle">Choose a new password 🔑</h3>
-    <form onsubmit="return false;">
+    <form id="pwForm" novalidate>
       <!-- Lets password managers save the new password against the right account. -->
       <input type="text" id="pwUsername" autocomplete="username" hidden>
       <input class="modal-input" type="password" id="newPwInput" placeholder="At least 6 characters" autocomplete="new-password" aria-label="New password">
       <div class="lock-error" id="pwError"></div>
       <div class="modal-btns">
-        <button type="button" class="btn-cancel" onclick="closeSheet('pwOverlay')">Not now</button>
-        <button type="button" class="btn-create" id="pwSaveBtn" onclick="saveNewPassword()">Save</button>
+        <button type="button" class="btn-cancel" data-close-sheet>Not now</button>
+        <button type="submit" class="btn-create" id="pwSaveBtn">Save</button>
       </div>
     </form>
   </div>
@@ -121,15 +123,15 @@
       <input class="modal-input share-link" id="shareLinkInput" type="text" readonly aria-label="Invite link">
     </div>
     <div class="modal-btns">
-      <button type="button" class="btn-create" id="shareCreateBtn" onclick="createInviteLink()">Create invite link</button>
-      <button type="button" class="btn-create" id="shareCopyBtn" onclick="copyInviteLink()" hidden>Copy link</button>
-      <button type="button" class="btn-cancel" id="shareSendBtn" onclick="sendInviteLink()" hidden>Send…</button>
+      <button type="button" class="btn-create" id="shareCreateBtn">Create invite link</button>
+      <button type="button" class="btn-create" id="shareCopyBtn" hidden>Copy link</button>
+      <button type="button" class="btn-cancel" id="shareSendBtn" hidden>Send…</button>
     </div>
     <p class="sheet-note" id="shareNote" aria-live="polite"></p>
     <h4 class="sheet-subtitle">People with access</h4>
     <ul class="member-list" id="memberList"></ul>
     <div class="modal-btns">
-      <button type="button" class="btn-cancel" onclick="closeSheet('shareOverlay')">Done</button>
+      <button type="button" class="btn-cancel" data-close-sheet>Done</button>
     </div>
   </div>
 </div>

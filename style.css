@@ -150,6 +150,7 @@ h1, h2, h3, .display {
   display: flex; align-items: center; gap: 6px;
 }
 .lock-input-wrap { position: relative; margin-bottom: 16px; }
+#emailInput { margin-bottom: 16px; }
 .lock-input {
   width: 100%; padding: 14px 48px 14px 16px;
   border: 2px solid var(--sand-border); border-radius: var(--r-sm);
@@ -158,14 +159,6 @@ h1, h2, h3, .display {
   transition: border-color 0.2s, background 0.2s;
 }
 .lock-input:focus { border-color: var(--mint); background: var(--field-focus); }
-.lock-input.error { border-color: var(--coral-deep); background: var(--coral-pale); animation: shake 0.35s ease; }
-@keyframes shake {
-  0%,100%{transform:translateX(0)}
-  20%{transform:translateX(-7px)}
-  40%{transform:translateX(7px)}
-  60%{transform:translateX(-5px)}
-  80%{transform:translateX(5px)}
-}
 .toggle-pw {
   position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
   background: none; border: none; cursor: pointer;
