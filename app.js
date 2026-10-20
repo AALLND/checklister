@@ -649,7 +649,7 @@ function getListHTML(list) {
         <div class="cb-box" aria-hidden="true"><span class="tick">✓</span></div>
       </label>
       <div class="item-text-wrap">
-        <input class="item-text${item.done ? ' done' : ''}" type="text" value="${escHtml(item.text)}"
+        <input class="item-text${item.done ? ' done' : ''}" type="text" autocapitalize="sentences" value="${escHtml(item.text)}"
           data-field="item" data-focus-key="item:${iid}" aria-label="Item text">
       </div>
       <button class="item-del" data-action="delete-item" data-focus-key="del:${iid}" aria-label="Delete item">✕</button>
@@ -707,12 +707,14 @@ function hideToast() {
 // ─── ACTIONS ──────────────────────────────────────────────────────────
 function switchList(id) { activeId = id; render(); }
 
+// Items always start with a capital letter, whether added or edited.
+function capitalize(text) { return text && text[0].toUpperCase() + text.slice(1); }
+
 function addItem(listId) {
   const inp = document.getElementById('newItemInput');
   const list = findList(listId);
-  const raw = inp.value.trim();
-  if (!raw || !list) return;
-  const text = raw[0].toUpperCase() + raw.slice(1); // new items always start with a capital letter
+  const text = capitalize(inp.value.trim());
+  if (!text || !list) return;
   const item = { id: uid(), text, done: false };
   list.items.push(item);
   inp.value = '';
@@ -739,7 +741,7 @@ function toggleItem(listId, itemId, checked) {
 function editItem(listId, itemId, input) {
   const item = findItem(listId, itemId);
   if (!item) return;
-  const text = input.value.trim();
+  const text = capitalize(input.value.trim());
   if (!text) { input.value = item.text; return; } // items can't be blank: put the old text back
   input.value = text;
   if (text === item.text) return;
