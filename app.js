@@ -534,6 +534,11 @@ function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;'
 function shorten(s, n = 30) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 function findList(id) { return lists.find(l => l.id === id); }
 function findItem(listId, itemId) { return findList(listId)?.items.find(i => i.id === itemId); }
+// Open items first, then ticked ones, each group in its saved order. This is
+// the order lists are shown in, and moves are counted in.
+function sortedItems(list) {
+  return [...list.items.filter(i => !i.done), ...list.items.filter(i => i.done)];
+}
 function listStats(list) {
   const total = list.items.length;
   const done = list.items.filter(i => i.done).length;
@@ -543,8 +548,7 @@ function listStats(list) {
 // ─── RENDER ───────────────────────────────────────────────────────────
 // render() rebuilds the tabs and the card from `lists`. Entry animations
 // only play when a list is first shown or an item was just added, and the
-// focused field (with any half-typed text) survives the rebuild. Ticking a
-// checkbox doesn't rebuild anything; see toggleItem().
+// focused field (with any half-typed text) survives the rebuild.
 function render() {
   if (drag) finishDrag(false); // e.g. another device's changes arrived mid-drag
   const focus = captureFocus();
@@ -576,16 +580,6 @@ function updateSubtitle() {
   let total = 0, done = 0;
   lists.forEach(l => { const s = listStats(l); total += s.total; done += s.done; });
   sub.textContent = total ? `${done} of ${total} done ${done === total ? '🎉' : ''}`.trim() : 'Add some items!';
-}
-
-function updateProgress(list) {
-  const { done, pct, allDone } = listStats(list);
-  const fill = document.querySelector('.progress-fill');
-  if (fill) { fill.style.width = pct + '%'; fill.classList.toggle('full', allDone); }
-  const label = document.querySelector('.progress-label');
-  if (label) label.textContent = pct + '%';
-  const clear = document.querySelector('.clear-done-btn');
-  if (clear) clear.hidden = !done;
 }
 
 function renderTabs() {
@@ -638,10 +632,14 @@ function getListHTML(list) {
   const isNewCard = list.id !== renderedListId;
   const lid = escHtml(list.id);
 
-  const itemsHtml = list.items.length ? list.items.map(item => {
+  const items = sortedItems(list);
+  const firstDone = done && done < total ? items.findIndex(i => i.done) : -1;
+  const itemsHtml = items.length ? items.map((item, n) => {
     const iid = escHtml(item.id);
+    const divider = n === firstDone
+      ? `<li class="done-divider" role="separator"><span>Done · ${done}</span></li>` : '';
     const animate = isNewCard || item.id === justAddedId;
-    return `<li class="item-row${animate ? ' slide-in' : ''}" data-item="${iid}">
+    return `${divider}<li class="item-row${animate ? ' slide-in' : ''}" data-item="${iid}">
       <button class="drag-handle" data-focus-key="drag:${iid}" title="Drag to reorder"
         aria-label="Reorder ${escHtml(item.text)}. Use the up and down arrow keys.">⋮⋮</button>
       <label class="cb-wrap">
@@ -730,12 +728,15 @@ function toggleItem(listId, itemId, checked) {
   const item = findItem(listId, itemId);
   if (!item) return;
   item.done = checked;
+  // A ticked item goes to the top of the done group below the line; an
+  // unticked one goes back to the end of the open items.
+  const rest = sortedItems(list).filter(i => i !== item);
+  const at = rest.findIndex(i => i.done);
+  rest.splice(at < 0 ? rest.length : at, 0, item);
+  list.items = rest;
+  justAddedId = item.id; // slides it in at its new place
   scheduleSave();
-  // Updated in place rather than re-rendered, so the checkbox and progress
-  // bar animate and nothing else on screen is disturbed.
-  document.querySelector(`.item-row[data-item="${CSS.escape(itemId)}"] .item-text`)?.classList.toggle('done', checked);
-  updateProgress(list);
-  updateSubtitle();
+  render();
 }
 
 function editItem(listId, itemId, input) {
@@ -836,11 +837,15 @@ function deleteList(listId) {
 // rows it passes slide out of the way; the list is only re-rendered on drop.
 let drag = null;
 
+// `from` and `to` are positions as shown (see sortedItems). Items only move
+// within their own group, above or below the done line.
 function moveItem(listId, from, to) {
   const list = findList(listId);
-  if (!list || from === to || from < 0 || to < 0 || to >= list.items.length) return;
-  const [item] = list.items.splice(from, 1);
-  list.items.splice(to, 0, item);
+  const items = list && sortedItems(list);
+  if (!list || from === to || from < 0 || to < 0 || to >= items.length || items[from].done !== items[to].done) return;
+  const [item] = items.splice(from, 1);
+  items.splice(to, 0, item);
+  list.items = items;
   scheduleSave();
   render();
   announce(`Moved "${shorten(item.text)}" to position ${to + 1} of ${list.items.length}`);
@@ -860,7 +865,11 @@ function startDrag(e, handle) {
   const listEl = row.parentElement;
   const rows = [...listEl.querySelectorAll('.item-row')];
   const from = rows.indexOf(row);
+  // The row can only be dragged within its own group (open or done).
+  const done = row.querySelector('input[type="checkbox"]').checked;
+  const same = rows.map(r => r.querySelector('input[type="checkbox"]').checked === done);
   drag = {
+    min: same.indexOf(true), max: same.lastIndexOf(true),
     listId: handle.closest('[data-list]').dataset.list,
     pointerId: e.pointerId, row, rows, listEl, from, to: from,
     startY: e.clientY, lastY: e.clientY, startScroll: window.scrollY,
@@ -880,7 +889,7 @@ function updateDrag() {
   const dy = d.lastY - d.startY + (window.scrollY - d.startScroll);
   d.row.style.transform = `translateY(${dy}px)`;
   const center = d.mids[d.from] + dy;
-  d.to = d.mids.filter((m, i) => i !== d.from && m < center).length;
+  d.to = Math.min(d.max, Math.max(d.min, d.mids.filter((m, i) => i !== d.from && m < center).length));
   d.rows.forEach((r, i) => {
     if (i === d.from) return;
     const shift = d.from < d.to && i > d.from && i <= d.to ? -d.step
@@ -1231,7 +1240,8 @@ function setupListEvents() {
     if (e.target.classList.contains('drag-handle') && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
       e.preventDefault();
       const { listId, itemId } = ids(e.target);
-      const from = findList(listId)?.items.findIndex(i => i.id === itemId) ?? -1;
+      const list = findList(listId);
+      const from = list ? sortedItems(list).findIndex(i => i.id === itemId) : -1;
       moveItem(listId, from, from + (e.key === 'ArrowUp' ? -1 : 1));
       return;
     }
