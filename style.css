@@ -327,6 +327,17 @@ h1, h2, h3, .display {
 .item-text:focus { white-space: normal; overflow: visible; color: var(--accent-text); }
 .item-text.done { text-decoration: line-through; color: var(--ink-faint); }
 
+.item-qty {
+  width: 48px; height: 30px; flex-shrink: 0; padding: 0 4px; text-align: center;
+  font-family: 'Nunito', sans-serif; font-size: 15px; font-weight: 700;
+  border: 1.5px solid var(--sand-border); border-radius: 9px; outline: none;
+  background: var(--field); color: var(--ink); transition: all 0.2s;
+  -moz-appearance: textfield; appearance: textfield;
+}
+.item-qty::-webkit-inner-spin-button, .item-qty::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.item-qty:focus { border-color: var(--mint); background: var(--field-focus); color: var(--accent-text); }
+.item-qty.done { color: var(--ink-faint); }
+
 .item-del {
   width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
   border: none; background: none; cursor: pointer; border-radius: 9px;

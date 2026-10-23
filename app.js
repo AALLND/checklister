@@ -534,6 +534,9 @@ function escHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;'
 function shorten(s, n = 30) { return s.length > n ? s.slice(0, n - 1) + '…' : s; }
 function findList(id) { return lists.find(l => l.id === id); }
 function findItem(listId, itemId) { return findList(listId)?.items.find(i => i.id === itemId); }
+// Items saved before quantities existed have no qty: they count as 1.
+const MAX_QTY = 999;
+function itemQty(item) { return Number.isInteger(item.qty) && item.qty >= 1 ? item.qty : 1; }
 // Open items first, then ticked ones, each group in its saved order. This is
 // the order lists are shown in, and moves are counted in.
 function sortedItems(list) {
@@ -650,6 +653,8 @@ function getListHTML(list) {
         <input class="item-text${item.done ? ' done' : ''}" type="text" autocapitalize="sentences" value="${escHtml(item.text)}"
           data-field="item" data-focus-key="item:${iid}" aria-label="Item text">
       </div>
+      <input class="item-qty${item.done ? ' done' : ''}" type="number" inputmode="numeric" min="1" max="${MAX_QTY}" value="${itemQty(item)}"
+        data-field="qty" data-focus-key="qty:${iid}" aria-label="Quantity of ${escHtml(item.text)}">
       <button class="item-del" data-action="delete-item" data-focus-key="del:${iid}" aria-label="Delete item">✕</button>
     </li>`;
   }).join('') : `<li class="empty-state">
@@ -713,7 +718,7 @@ function addItem(listId) {
   const list = findList(listId);
   const text = capitalize(inp.value.trim());
   if (!text || !list) return;
-  const item = { id: uid(), text, done: false };
+  const item = { id: uid(), text, done: false, qty: 1 };
   list.items.push(item);
   inp.value = '';
   addDrafts[listId] = '';
@@ -748,6 +753,19 @@ function editItem(listId, itemId, input) {
   if (text === item.text) return;
   item.text = text;
   input.closest('.item-row')?.querySelector('input[type="checkbox"]')?.setAttribute('aria-label', text);
+  input.closest('.item-row')?.querySelector('.item-qty')?.setAttribute('aria-label', `Quantity of ${text}`);
+  scheduleSave();
+}
+
+function editQty(listId, itemId, input) {
+  const item = findItem(listId, itemId);
+  if (!item) return;
+  const qty = Number(input.value);
+  // Blank, zero or not a whole number: put the old quantity back.
+  if (!Number.isInteger(qty) || qty < 1) { input.value = itemQty(item); return; }
+  input.value = Math.min(qty, MAX_QTY);
+  if (+input.value === itemQty(item)) return;
+  item.qty = +input.value;
   scheduleSave();
 }
 
@@ -1225,6 +1243,7 @@ function setupListEvents() {
     const field = e.target.dataset.field;
     const { listId, itemId } = ids(e.target);
     if (field === 'item') editItem(listId, itemId, e.target);
+    else if (field === 'qty') editQty(listId, itemId, e.target);
     else if (field === 'title') renameList(listId, e.target);
   });
 
@@ -1253,7 +1272,8 @@ function setupListEvents() {
       else e.target.blur();
     } else if (e.key === 'Escape' && field !== 'add') {
       // Throw away the edit: put the saved text back before blurring.
-      const saved = field === 'title' ? findList(listId)?.name : findItem(listId, itemId)?.text;
+      const item = findItem(listId, itemId);
+      const saved = field === 'title' ? findList(listId)?.name : field === 'qty' ? (item && itemQty(item)) : item?.text;
       if (saved != null) e.target.value = saved;
       e.target.blur();
     }
