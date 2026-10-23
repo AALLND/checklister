@@ -136,6 +136,40 @@
   </div>
 </div>
 
+<div class="overlay" id="productOverlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="productTitle">
+    <div class="modal-handle"></div>
+    <h3 id="productTitle">Price and photo</h3>
+    <p class="sheet-text" id="productText"></p>
+    <div class="product-photo" id="productPhoto"></div>
+    <input type="file" id="productPhotoInput" accept="image/*" hidden>
+    <div class="modal-btns product-photo-btns">
+      <button type="button" class="btn-cancel" id="productPhotoBtn">Add photo</button>
+      <button type="button" class="btn-cancel" id="productPhotoRemove" hidden>Remove photo</button>
+    </div>
+    <form id="productForm" novalidate>
+      <label class="lock-label" for="productPriceInput">Price per piece (kr)</label>
+      <input class="modal-input" type="text" id="productPriceInput" inputmode="decimal" placeholder="e.g. 12,50" autocomplete="off">
+      <p class="sheet-note product-note" id="productNote" aria-live="polite"></p>
+      <div class="modal-btns">
+        <button type="button" class="btn-cancel" data-close-sheet>Cancel</button>
+        <button type="submit" class="btn-create">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="overlay" id="historyOverlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
+    <div class="modal-handle"></div>
+    <h3 id="historyTitle">History</h3>
+    <div id="historyBody"></div>
+    <div class="modal-btns">
+      <button type="button" class="btn-cancel" id="historyDoneBtn" data-close-sheet>Done</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <div class="sr-only" id="srStatus" aria-live="polite"></div>
 

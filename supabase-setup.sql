@@ -8,6 +8,9 @@
 -- can be shared. `list_members` says who can see and edit each list, and
 -- invite links go through `list_invites` + accept_invite().
 --
+-- Part 3 adds the Storage bucket for product photos, and keeps prices and
+-- history when an older app version saves a list.
+--
 -- Saves use optimistic locking: the app only updates a list where
 -- `updated_at` still equals the version it last saw, so two people or
 -- devices can't silently overwrite each other.
@@ -277,3 +280,52 @@ cross join lateral jsonb_array_elements(
 where l ? 'id'
   and not exists (select 1 from public.lists x where x.owner_id = c.user_id)
 on conflict (id) do nothing;
+
+-- ═══ PART 3: product photos ══════════════════════════════════════════════
+-- Prices live in each list's `data` (data.products), but photos are files in
+-- the private `product-photos` Storage bucket, stored as <list id>/<file>.
+-- Only the list's members can see, add or delete its photos.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('product-photos', 'product-photos', false, 2097152, array['image/jpeg'])
+on conflict (id) do update
+  set public = false,
+      file_size_limit = excluded.file_size_limit,
+      allowed_mime_types = excluded.allowed_mime_types;
+
+drop policy if exists "product_photos_select_member" on storage.objects;
+create policy "product_photos_select_member" on storage.objects
+  for select to authenticated
+  using (bucket_id = 'product-photos' and public.is_list_member((storage.foldername(name))[1]));
+
+drop policy if exists "product_photos_insert_member" on storage.objects;
+create policy "product_photos_insert_member" on storage.objects
+  for insert to authenticated
+  with check (bucket_id = 'product-photos' and public.is_list_member((storage.foldername(name))[1]));
+
+drop policy if exists "product_photos_delete_member" on storage.objects;
+create policy "product_photos_delete_member" on storage.objects
+  for delete to authenticated
+  using (bucket_id = 'product-photos' and public.is_list_member((storage.foldername(name))[1]));
+
+-- Older app versions save a list as just { name, items }. Keep its prices
+-- and history when such a save arrives, instead of wiping them.
+create or replace function public.keep_list_extras()
+returns trigger
+language plpgsql
+as $$
+begin
+  if not (new.data ? 'products') and old.data ? 'products' then
+    new.data := new.data || jsonb_build_object('products', old.data -> 'products');
+  end if;
+  if not (new.data ? 'history') and old.data ? 'history' then
+    new.data := new.data || jsonb_build_object('history', old.data -> 'history');
+  end if;
+  return new;
+end;
+$$;
+revoke all on function public.keep_list_extras() from public, anon, authenticated;
+
+drop trigger if exists lists_keep_extras on public.lists;
+create trigger lists_keep_extras
+  before update on public.lists
+  for each row execute function public.keep_list_extras();
