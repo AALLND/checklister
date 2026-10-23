@@ -285,11 +285,18 @@ h1, h2, h3, .display {
 }
 .card-title-input:focus { color: var(--accent-text); }
 
-.progress-wrap { padding: 10px 18px; display: flex; align-items: center; gap: 10px; border-bottom: 1.5px solid var(--sand-border); }
-.progress-track { flex: 1; height: 8px; background: var(--mint-pale); border-radius: 99px; overflow: hidden; }
-.progress-fill { height: 100%; background: linear-gradient(90deg, var(--mint), var(--mint-deep)); border-radius: 99px; transition: width 0.5s cubic-bezier(0.34,1.56,0.64,1); }
-.progress-fill.full { background: linear-gradient(90deg, var(--mint-deep), var(--mint-full)); }
-.progress-label { font-size: 12px; font-weight: 800; color: var(--ink-soft); min-width: 32px; text-align: right; }
+/* Total left to buy, and the way into History. */
+.list-summary { padding: 10px 18px; display: flex; align-items: center; gap: 8px; border-bottom: 1.5px solid var(--sand-border); }
+.summary-total { flex: 1; min-width: 0; font-size: 13px; font-weight: 700; color: var(--ink); }
+.summary-total strong { color: var(--accent-text); font-weight: 800; }
+.summary-note { color: var(--ink-soft); font-weight: 600; }
+.history-btn {
+  flex-shrink: 0; display: flex; align-items: center; gap: 5px;
+  border: 1.5px solid var(--mint-border); background: var(--mint-pale); cursor: pointer;
+  padding: 4px 11px; border-radius: var(--r-pill);
+  font-family: 'Nunito', sans-serif; font-size: 12px; font-weight: 800; color: var(--accent-text);
+}
+.history-count { background: var(--mint); color: #fff; border-radius: var(--r-pill); padding: 0 6px; font-size: 11px; line-height: 1.6; }
 
 .items-list { list-style: none; }
 .item-row {
@@ -326,6 +333,21 @@ h1, h2, h3, .display {
 }
 .item-text:focus { white-space: normal; overflow: visible; color: var(--accent-text); }
 .item-text.done { text-decoration: line-through; color: var(--ink-faint); }
+.item-price { display: block; font-size: 12px; font-weight: 700; color: var(--ink-soft); margin-top: 1px; }
+.item-price:empty { display: none; }
+
+/* The kr button, or the item's photo once it has one. */
+.item-product {
+  width: 34px; height: 34px; flex-shrink: 0; padding: 0; overflow: hidden;
+  display: flex; align-items: center; justify-content: center;
+  border: 1.5px dashed var(--tan); border-radius: 10px; background: none; cursor: pointer;
+  font-family: 'Nunito', sans-serif; font-size: 12px; font-weight: 800; color: var(--tan);
+  transition: all 0.18s;
+}
+.item-product:hover { border-color: var(--coral); color: var(--coral-deep); background: var(--coral-pale); }
+.item-product.has-photo { border: 1.5px solid var(--sand-border); background: var(--field); }
+.item-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
+.item-thumb:not([src]) { visibility: hidden; }
 
 .item-qty {
   width: 48px; height: 30px; flex-shrink: 0; padding: 0 4px; text-align: center;
@@ -523,3 +545,69 @@ h1, h2, h3, .display {
 .member-leave { margin-top: 8px; padding: 8px 0; }
 .member-remove:hover, .member-leave:hover { background: var(--coral-pale); }
 .member-leave:hover { padding: 8px 10px; margin-left: -10px; }
+
+/* ── PRICE & PHOTO SHEET ── */
+.product-photo {
+  height: 220px; margin-bottom: 12px; border-radius: var(--r-md); overflow: hidden;
+  background: var(--field); border: 2px solid var(--sand-border);
+  display: flex; align-items: center; justify-content: center;
+}
+.product-img { width: 100%; height: 100%; object-fit: contain; display: block; }
+.product-img:not([src]) { visibility: hidden; }
+.product-no-photo { font-size: 14px; font-weight: 700; color: var(--ink-soft); }
+.product-photo-btns { margin-bottom: 20px; }
+.product-photo-btns [hidden] { display: none; }
+.product-note { margin: -4px 0 14px; }
+
+/* ── HISTORY SHEET ── */
+.history-empty { font-size: 14px; font-weight: 600; color: var(--ink-soft); line-height: 1.5; padding: 8px 0 22px; }
+.history-month { margin-bottom: 20px; }
+.history-month-head {
+  display: flex; justify-content: space-between; gap: 10px;
+  font-family: 'Baloo 2', sans-serif; font-size: 16px; font-weight: 700; color: var(--ink);
+  padding-bottom: 6px; border-bottom: 2px solid var(--mint-border);
+}
+.history-month-head span:last-child { color: var(--accent-text); }
+.history-day-head {
+  display: flex; justify-content: space-between; gap: 10px; margin-top: 12px;
+  font-size: 12px; font-weight: 800; color: var(--ink-soft); letter-spacing: 0.02em;
+}
+.history-items { list-style: none; }
+.history-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; border-bottom: 1.5px solid var(--row-border);
+  font-size: 14px; font-weight: 700;
+}
+.history-row:last-child { border-bottom: none; }
+.history-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.history-qty { color: var(--ink-soft); font-weight: 600; }
+.history-cost { flex-shrink: 0; color: var(--ink); }
+.history-putback {
+  flex-shrink: 0; border: none; background: none; cursor: pointer;
+  padding: 4px 8px; margin-right: -8px; border-radius: var(--r-pill);
+  font-family: 'Nunito', sans-serif; font-size: 12px; font-weight: 800; color: var(--accent-text);
+}
+.history-putback:hover { background: var(--mint-pale); }
+.list-summary .clear-done-btn { margin-right: 0; }
+.summary-total .summary-note { display: block; font-size: 12px; }
+
+/* ── LIST TYPE (shopping or task list) ── */
+.type-btn {
+  height: 32px; min-width: 32px; padding: 0 6px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  border: none; background: none; cursor: pointer; border-radius: 10px;
+  font-size: 15px; transition: background 0.18s;
+}
+.type-btn:hover { background: var(--mint-pale); }
+.type-choice { border: none; display: flex; gap: 10px; margin: 0 0 16px; padding: 0; min-width: 0; }
+.type-option {
+  position: relative; flex: 1; min-width: 0; cursor: pointer;
+  display: flex; flex-direction: column; gap: 2px; padding: 12px 14px;
+  border: 2px solid var(--sand-border); border-radius: var(--r-sm); background: var(--field);
+  transition: border-color 0.18s, background 0.18s;
+}
+.type-option input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.type-option:has(input:checked) { border-color: var(--mint); background: var(--mint-pale); }
+.type-option:has(input:focus-visible) { outline: 2px solid var(--mint-deep); outline-offset: 2px; }
+.type-option-name { font-size: 14px; font-weight: 800; color: var(--ink); }
+.type-option-desc { font-size: 12px; font-weight: 600; color: var(--ink-soft); line-height: 1.3; }

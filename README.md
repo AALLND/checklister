@@ -20,6 +20,20 @@ Tap 👥 on a list → **Create invite link**, and send the link to someone. Whe
 
 The 👥 sheet shows who has access. The owner can remove people. Everyone else can leave the list (the 🚪 button). Deleting a shared list removes it for everyone, after the usual Undo window.
 
+## Shopping lists and task lists
+
+When you create a list you pick its type. A **🛒 Shopping list** has prices, photos, a total and a history (below). A **✅ Task list** is a plain checklist: ticked items stay on the list below the done line until **Clear done** is pressed, and there are no prices, quantities or history. Tap the 🛒 / ✅ button next to the list name to change the type; nothing is lost, as a task list just hides its prices and history. Lists made before types existed are shopping lists.
+
+## Prices, photos and history
+
+Tap **kr** on an item to give it a price and a photo. They belong to the item's name on that list, so every "Milk" on the list shares them, and so does everyone the list is shared with. The list shows what's left to buy (price × quantity).
+
+Ticking an item moves it to the list's **History**, grouped by day and month with a total for each. History keeps the price and quantity from when the item was ticked, and **Put back** returns it to the list.
+
+Prices and history are saved in the list itself, but photos need the `product-photos` Storage bucket from part 3 of [`supabase-setup.sql`](supabase-setup.sql). Photos only load while online. Deleting a list doesn't delete its photos (Supabase → Storage shows them if you want to clean up).
+
+An older version of the app (on a device that hasn't reloaded yet) still works with these lists. It doesn't show prices or history, and the database keeps them when it saves. Items it ticks off stay on the list as done, until **Move done to history** is pressed in the new version.
+
 ## About the Supabase key in `app.js`
 
 `app.js` contains the Supabase project URL and a **publishable** key (`sb_publishable_…`). It's meant to be public:

@@ -50,6 +50,9 @@ let renderedListId;         // list whose card is on screen
 let justAddedId;            // item to animate in on the next render
 let addDrafts;              // unsent "Add something…" text, per list
 let shareListId, shareUrl;  // list open in the Share sheet, and its invite link
+let historyListId;          // list open in the History sheet
+let productEdit;            // product being edited in the Price & photo sheet
+let photoUrls;              // photo path → { url, exp }: signed links, or local copies of new uploads
 
 const RETRY_START_MS = 2000;
 
@@ -69,6 +72,9 @@ function resetSessionState() {
   addDrafts = {};
   shareListId = null;
   shareUrl = '';
+  historyListId = null;
+  productEdit = null;
+  photoUrls = new Map();
 }
 resetSessionState();
 
@@ -161,6 +167,8 @@ function resetToLoginScreen() {
   closeModal();
   closeSheet('pwOverlay');
   closeSheet('shareOverlay');
+  closeSheet('productOverlay');
+  closeSheet('historyOverlay');
   setSyncState('ok');
   document.getElementById('appWrapper').style.display = 'none';
   document.getElementById('authScreen').style.display = 'flex';
@@ -327,9 +335,21 @@ function checkSameUser(user) {
   if (currentUser !== user) throw new Error('Session changed during sync');
 }
 
+// `type` is 'shopping' or 'tasks' (see LIST_TYPES), `products` holds the
+// price and photo for each item name (see productKey), `history` the items
+// ticked off (see buyItem). Lists saved before these existed are shopping
+// lists, with the others empty.
 function rowToList(row) {
   const d = row.data || {};
-  return { id: row.id, name: typeof d.name === 'string' ? d.name : 'List', items: Array.isArray(d.items) ? d.items : [] };
+  const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
+  return {
+    id: row.id,
+    name: typeof d.name === 'string' ? d.name : 'List',
+    type: listType(d),
+    items: Array.isArray(d.items) ? d.items : [],
+    products: isObj(d.products) ? d.products : {},
+    history: Array.isArray(d.history) ? d.history : []
+  };
 }
 
 async function pullFromCloud(user) {
@@ -383,7 +403,7 @@ async function pushToCloud(user) {
     let conflict = false;
     for (const list of lists.filter(isDirty)) {
       const snap = clone(list);
-      const data = { name: snap.name, items: snap.items };
+      const data = { name: snap.name, type: listType(snap), items: snap.items, products: snap.products || {}, history: snap.history || [] };
       const m = meta[snap.id];
       const now = new Date().toISOString();
       const res = !(m && m.at)
@@ -490,11 +510,22 @@ function stopRealtime() {
 // changed the same item, the local edit wins. Anything created or edited on
 // either side is kept; a delete only sticks if the other side didn't edit it.
 function mergeLists(base, local, remote) {
+  const pick = (bx, lx, rx) => bx && same(bx, lx) ? rx : lx;
   return mergeById(base, local, remote, (b, l, r) => ({
     ...r,
     name: b && b.name === l.name ? r.name : l.name,
-    items: mergeById(b ? b.items : [], l.items, r.items, (bi, li, ri) => bi && same(bi, li) ? ri : li)
+    type: b && listType(b) === listType(l) ? listType(r) : listType(l),
+    items: mergeById(b ? b.items : [], l.items, r.items, pick),
+    products: mergeByKey(b && b.products || {}, l.products || {}, r.products || {}, pick),
+    history: mergeById(b && b.history || [], l.history || [], r.history || [], pick)
   }));
+}
+
+// mergeById for objects keyed by id, like `products`.
+function mergeByKey(base, local, remote, mergeBoth) {
+  const arr = o => Object.entries(o).map(([id, v]) => ({ ...v, id }));
+  const merged = mergeById(arr(base), arr(local), arr(remote), mergeBoth);
+  return Object.fromEntries(merged.map(({ id, ...v }) => [id, v]));
 }
 
 function mergeById(base, local, remote, mergeBoth) {
@@ -542,10 +573,139 @@ function itemQty(item) { return Number.isInteger(item.qty) && item.qty >= 1 ? it
 function sortedItems(list) {
   return [...list.items.filter(i => !i.done), ...list.items.filter(i => i.done)];
 }
+
+// A shopping list has prices, photos, a total and a history of what was
+// bought; a task list is a plain checklist. Lists without a type (saved
+// before types existed) are shopping lists. Products and history are kept
+// on a task list, so changing it back brings them back.
+const LIST_TYPES = {
+  shopping: { icon: '🛒', name: 'Shopping list' },
+  tasks: { icon: '✅', name: 'Task list' }
+};
+function listType(list) { return list && list.type === 'tasks' ? 'tasks' : 'shopping'; }
+function isShopping(list) { return listType(list) === 'shopping'; }
+
 function listStats(list) {
   const total = list.items.length;
   const done = list.items.filter(i => i.done).length;
-  return { total, done, pct: total ? Math.round(done / total * 100) : 0, allDone: total > 0 && done === total };
+  return { total, done, open: total - done };
+}
+
+// ─── PRICES & PHOTOS ──────────────────────────────────────────────────
+// A price and photo belong to an item name on a list, so every "Milk" on
+// that list shares them and a new "milk" picks them up straight away.
+// list.products[productKey(text)] = { price, photo }: price in kroner (or
+// null), photo a path in the Storage bucket (or null).
+const PHOTO_BUCKET = 'product-photos';
+const PHOTO_MAX_PX = 800;               // longest side after resizing
+const PHOTO_URL_TTL = 60 * 60 * 24;     // signed photo links last a day (seconds)
+const MAX_PRICE = 1000000;
+const kroner = new Intl.NumberFormat('da-DK', { style: 'currency', currency: 'DKK' });
+
+function productKey(text) { return text.trim().toLocaleLowerCase().replace(/\s+/g, ' '); }
+function productFor(list, text) { return (list.products || {})[productKey(text)] || null; }
+function unitPrice(list, item) {
+  const p = productFor(list, item.text);
+  return p && typeof p.price === 'number' ? p.price : null;
+}
+function formatPrice(n) { return kroner.format(n); }
+// For the price field: 12.5 → "12,50".
+function priceInputValue(n) { return n == null ? '' : n.toFixed(2).replace('.', ','); }
+
+// "12,50", "12.5", "1.234,50", "12 kr" → a number; blank → null; anything
+// else → undefined.
+function parsePrice(str) {
+  let s = str.trim().replace(/\s+/g, '').replace(/(kr\.?|dkk)$/i, '');
+  if (!s) return null;
+  if (s.includes(',')) s = s.replace(/\./g, '').replace(',', '.');
+  if (!/^\d+(\.\d{1,2})?$/.test(s)) return undefined;
+  const n = Math.round(Number(s) * 100) / 100;
+  return n < MAX_PRICE ? n : undefined;
+}
+
+// What's left to buy on a list: the sum of price × quantity, and how many
+// open items have no price yet.
+function listTotal(list) {
+  let sum = 0, unpriced = 0;
+  list.items.forEach(i => {
+    if (i.done) return;
+    const price = unitPrice(list, i);
+    if (price == null) unpriced++;
+    else sum += price * itemQty(i);
+  });
+  return { sum, unpriced, priced: list.items.some(i => !i.done && unitPrice(list, i) != null) };
+}
+
+function photoUrl(path) {
+  const u = path && photoUrls.get(path);
+  return u && u.exp > Date.now() ? u.url : '';
+}
+
+// Photos are private to the list's members, so they're shown through signed
+// links, fetched in one go for the photos on screen.
+let photosLoading = new Set();
+async function loadPhotoUrls(paths) {
+  const user = currentUser;
+  const soon = Date.now() + 60000;
+  const missing = [...new Set(paths)].filter(p => p && !photosLoading.has(p) && !(photoUrls.get(p)?.exp > soon));
+  if (!missing.length || !user) return;
+  missing.forEach(p => photosLoading.add(p));
+  try {
+    const { data, error } = await supabaseClient.storage.from(PHOTO_BUCKET).createSignedUrls(missing, PHOTO_URL_TTL);
+    if (error) throw error;
+    if (currentUser !== user) return;
+    const exp = Date.now() + PHOTO_URL_TTL * 1000;
+    (data || []).forEach(d => { if (d.signedUrl && d.path) photoUrls.set(d.path, { url: d.signedUrl, exp }); });
+  } catch (e) {
+    console.warn('Could not load photos:', e);
+  } finally {
+    missing.forEach(p => photosLoading.delete(p));
+  }
+  showPhotos();
+}
+
+// Fills in <img data-photo="path"> elements whose link has arrived.
+function showPhotos() {
+  document.querySelectorAll('img[data-photo]').forEach(img => {
+    const url = photoUrl(img.dataset.photo);
+    if (url && img.getAttribute('src') !== url) img.src = url;
+  });
+}
+
+function photoImg(path, alt, cls) {
+  const url = photoUrl(path);
+  return `<img class="${cls}" data-photo="${escHtml(path)}" alt="${escHtml(alt)}"${url ? ` src="${escHtml(url)}"` : ''}>`;
+}
+
+// Deleting old photos is best effort: a leftover file only costs storage.
+function removePhotos(paths) {
+  const list = paths.filter(Boolean);
+  if (!list.length) return;
+  supabaseClient.storage.from(PHOTO_BUCKET).remove(list)
+    .then(({ error }) => { if (error) console.warn('Could not delete photos:', error); })
+    .catch(e => console.warn('Could not delete photos:', e));
+}
+
+function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('That file can’t be read as a photo')); };
+    img.src = url;
+  });
+}
+
+// Phone photos are several MB: shrink them to a JPEG of a few hundred KB.
+async function compressPhoto(file) {
+  const img = await loadImage(file);
+  const scale = Math.min(1, PHOTO_MAX_PX / Math.max(img.naturalWidth, img.naturalHeight));
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+  return new Promise((resolve, reject) => canvas.toBlob(
+    b => b ? resolve(b) : reject(new Error('Could not read the photo')), 'image/jpeg', 0.8));
 }
 
 // ─── RENDER ───────────────────────────────────────────────────────────
@@ -558,6 +718,7 @@ function render() {
   renderTabs();
   renderContent();
   updateSubtitle();
+  if (historyListId) renderHistory();
   restoreFocus(focus);
 }
 
@@ -580,9 +741,8 @@ function updateSubtitle() {
   const sub = document.getElementById('subtitle');
   if (!sub) return;
   if (!lists.length) { sub.textContent = 'Start by creating a list 💫'; return; }
-  let total = 0, done = 0;
-  lists.forEach(l => { const s = listStats(l); total += s.total; done += s.done; });
-  sub.textContent = total ? `${done} of ${total} done ${done === total ? '🎉' : ''}`.trim() : 'Add some items!';
+  const open = lists.reduce((n, l) => n + listStats(l).open, 0);
+  sub.textContent = open ? `${open} item${open === 1 ? '' : 's'} left` : 'All done 🎉';
 }
 
 function renderTabs() {
@@ -625,15 +785,70 @@ function renderContent() {
   el.innerHTML = getListHTML(list);
   renderedListId = list.id;
   justAddedId = null;
+  if (isShopping(list)) loadPhotoUrls(list.items.map(i => productFor(list, i.text)?.photo));
+}
+
+// The parts of a row and card that depend on prices, also refreshed in place
+// after an edit (see refreshPrices).
+function productBtnHTML(list, item) {
+  const p = productFor(list, item.text);
+  const label = `Price and photo for ${item.text}`;
+  return p && p.photo
+    ? `<button class="item-product has-photo" data-action="product" data-focus-key="product:${escHtml(item.id)}" aria-label="${escHtml(label)}">${photoImg(p.photo, '', 'item-thumb')}</button>`
+    : `<button class="item-product" data-action="product" data-focus-key="product:${escHtml(item.id)}" aria-label="${escHtml(label)}">kr</button>`;
+}
+
+function priceLine(list, item) {
+  const price = unitPrice(list, item);
+  if (price == null) return '';
+  const qty = itemQty(item);
+  return qty > 1 ? `${qty} × ${formatPrice(price)} = ${formatPrice(price * qty)}` : formatPrice(price);
+}
+
+function summaryHTML(list) {
+  const { total, done } = listStats(list);
+  if (!isShopping(list)) {
+    return `<div class="list-summary">
+      <span class="summary-total">${total ? `${done} of ${total} done` : ''}</span>
+      <button class="clear-done-btn" data-action="clear-done" ${done ? '' : 'hidden'}>Clear done</button>
+    </div>`;
+  }
+  const { sum, unpriced, priced } = listTotal(list);
+  const totalText = priced
+    ? `To buy: <strong>${formatPrice(sum)}</strong>${unpriced ? `<span class="summary-note">+ ${unpriced} without a price</span>` : ''}`
+    : '<span class="summary-note">Tap kr on an item to add a price</span>';
+  return `<div class="list-summary">
+    <span class="summary-total">${list.items.some(i => !i.done) ? totalText : ''}</span>
+    <button class="clear-done-btn" data-action="clear-done" ${done ? '' : 'hidden'}>Move done to history</button>
+    <button class="history-btn" data-action="history">History${list.history?.length ? ` <span class="history-count">${list.history.length}</span>` : ''}</button>
+  </div>`;
+}
+
+function refreshPrices(listId) {
+  const list = findList(listId);
+  const card = document.querySelector(`.list-card[data-list="${CSS.escape(listId)}"]`);
+  if (!list || !card || !isShopping(list)) return;
+  card.querySelectorAll('.item-row').forEach(row => {
+    const item = list.items.find(i => i.id === row.dataset.item);
+    if (!item) return;
+    row.querySelector('.item-price').textContent = priceLine(list, item);
+    const btn = row.querySelector('.item-product');
+    if (document.activeElement !== btn) btn.outerHTML = productBtnHTML(list, item);
+  });
+  card.querySelector('.list-summary').outerHTML = summaryHTML(list);
+  loadPhotoUrls(list.items.map(i => productFor(list, i.text)?.photo));
 }
 
 function getListHTML(list) {
-  const { total, done, pct, allDone } = listStats(list);
+  const { total, done } = listStats(list);
   const info = shareInfo[list.id];
   const shared = info?.members > 1;
   const leave = info?.mine === false;
   const isNewCard = list.id !== renderedListId;
   const lid = escHtml(list.id);
+  const shopping = isShopping(list);
+  const type = LIST_TYPES[listType(list)];
+  const otherType = LIST_TYPES[shopping ? 'tasks' : 'shopping'];
 
   const items = sortedItems(list);
   const firstDone = done && done < total ? items.findIndex(i => i.done) : -1;
@@ -649,12 +864,14 @@ function getListHTML(list) {
         <input type="checkbox" data-action="toggle" data-focus-key="cb:${iid}" aria-label="${escHtml(item.text)}" ${item.done ? 'checked' : ''}>
         <div class="cb-box" aria-hidden="true"><span class="tick">✓</span></div>
       </label>
+      ${shopping ? productBtnHTML(list, item) : ''}
       <div class="item-text-wrap">
         <input class="item-text${item.done ? ' done' : ''}" type="text" autocapitalize="sentences" value="${escHtml(item.text)}"
           data-field="item" data-focus-key="item:${iid}" aria-label="Item text">
+        ${shopping ? `<span class="item-price">${escHtml(priceLine(list, item))}</span>` : ''}
       </div>
-      <input class="item-qty${item.done ? ' done' : ''}" type="number" inputmode="numeric" min="1" max="${MAX_QTY}" value="${itemQty(item)}"
-        data-field="qty" data-focus-key="qty:${iid}" aria-label="Quantity of ${escHtml(item.text)}">
+      ${shopping ? `<input class="item-qty${item.done ? ' done' : ''}" type="number" inputmode="numeric" min="1" max="${MAX_QTY}" value="${itemQty(item)}"
+        data-field="qty" data-focus-key="qty:${iid}" aria-label="Quantity of ${escHtml(item.text)}">` : ''}
       <button class="item-del" data-action="delete-item" data-focus-key="del:${iid}" aria-label="Delete item">✕</button>
     </li>`;
   }).join('') : `<li class="empty-state">
@@ -666,17 +883,13 @@ function getListHTML(list) {
     <div class="card-header">
       <input class="card-title-input" type="text" value="${escHtml(list.name)}"
         data-field="title" data-focus-key="title:${lid}" aria-label="List name">
+      <button class="type-btn" data-action="change-type" data-focus-key="type:${lid}" title="Change to a ${otherType.name.toLowerCase()}"
+        aria-label="${type.name}. Change to a ${otherType.name.toLowerCase()}">${type.icon}</button>
       <button class="share-btn${shared ? ' is-shared' : ''}" data-action="share-list" title="Share list"
         aria-label="${shared ? `Shared with ${info.members - 1} other${info.members > 2 ? 's' : ''}. Share list` : 'Share list'}">👥${shared ? `<span class="share-count">${info.members}</span>` : ''}</button>
       <button class="del-list-btn" data-action="delete-list" title="${leave ? 'Leave list' : 'Delete list'}" aria-label="${leave ? 'Leave list' : 'Delete list'}">${leave ? 'Leave' : 'Delete'}</button>
     </div>
-    ${total > 0 ? `<div class="progress-wrap">
-      <div class="progress-track" aria-hidden="true">
-        <div class="progress-fill ${allDone?'full':''}" style="width:${pct}%"></div>
-      </div>
-      <span class="progress-label">${pct}%</span>
-      <button class="clear-done-btn" data-action="clear-done" ${done ? '' : 'hidden'}>Clear done</button>
-    </div>` : ''}
+    ${summaryHTML(list)}
     <ul class="items-list">${itemsHtml}</ul>
     <div class="add-row">
       <span class="add-row-icon" aria-hidden="true">🌸</span>
@@ -728,13 +941,18 @@ function addItem(listId) {
   document.getElementById('newItemInput')?.focus();
 }
 
+// On a shopping list, ticking an item moves it to the list's history. Items
+// ticked before history existed (or by an older version of the app, or while
+// it was a task list) stay below the done line until they're unticked or
+// moved to history. On a task list, ticked items stay below the done line.
 function toggleItem(listId, itemId, checked) {
   const list = findList(listId);
+  if (checked && isShopping(list)) { buyItem(listId, itemId); return; }
   const item = findItem(listId, itemId);
   if (!item) return;
   item.done = checked;
-  // A ticked item goes to the top of the done group below the line; an
-  // unticked one goes back to the end of the open items.
+  // A ticked item goes to the top of the done ones, an unticked one to the
+  // end of the open ones.
   const rest = sortedItems(list).filter(i => i !== item);
   const at = rest.findIndex(i => i.done);
   rest.splice(at < 0 ? rest.length : at, 0, item);
@@ -742,6 +960,66 @@ function toggleItem(listId, itemId, checked) {
   justAddedId = item.id; // slides it in at its new place
   scheduleSave();
   render();
+}
+
+// Changing the type keeps everything: prices, photos and history are only
+// hidden on a task list.
+function changeListType(listId) {
+  const list = findList(listId);
+  if (!list) return;
+  const old = listType(list);
+  list.type = old === 'shopping' ? 'tasks' : 'shopping';
+  scheduleSave();
+  render();
+  showToast(`Changed to a ${LIST_TYPES[list.type].name.toLowerCase()}`, () => {
+    const l = findList(listId);
+    if (!l) return;
+    l.type = old;
+    scheduleSave();
+    render();
+  });
+}
+
+// A history entry keeps the price and quantity at the time it was bought.
+function historyEntry(list, item, at = new Date().toISOString()) {
+  return { id: uid(), text: item.text, qty: itemQty(item), price: unitPrice(list, item), at };
+}
+
+function buyItem(listId, itemId) {
+  const list = findList(listId);
+  const index = list ? list.items.findIndex(i => i.id === itemId) : -1;
+  if (index < 0) return;
+  const [item] = list.items.splice(index, 1);
+  const entry = historyEntry(list, item);
+  list.history = [...(list.history || []), entry];
+  scheduleSave();
+  render();
+  showToast(`Moved "${shorten(item.text)}" to history`, () => {
+    const l = findList(listId);
+    if (!l) return;
+    l.history = (l.history || []).filter(h => h.id !== entry.id);
+    if (!l.items.some(i => i.id === item.id)) l.items.splice(Math.min(index, l.items.length), 0, item);
+    justAddedId = item.id;
+    scheduleSave();
+    render();
+  });
+}
+
+// From the History sheet: the item goes back on the list.
+function putBack(listId, entryId) {
+  const list = findList(listId);
+  const entry = list && (list.history || []).find(h => h.id === entryId);
+  if (!entry) return;
+  list.history = list.history.filter(h => h !== entry);
+  const item = { id: uid(), text: entry.text, done: false, qty: entry.qty };
+  const rest = sortedItems(list);
+  const at = rest.findIndex(i => i.done);
+  rest.splice(at < 0 ? rest.length : at, 0, item);
+  list.items = rest;
+  justAddedId = item.id;
+  scheduleSave();
+  render();
+  announce(`Put "${shorten(entry.text)}" back on the list`);
 }
 
 function editItem(listId, itemId, input) {
@@ -755,6 +1033,7 @@ function editItem(listId, itemId, input) {
   input.closest('.item-row')?.querySelector('input[type="checkbox"]')?.setAttribute('aria-label', text);
   input.closest('.item-row')?.querySelector('.item-qty')?.setAttribute('aria-label', `Quantity of ${text}`);
   scheduleSave();
+  refreshPrices(listId); // the new name may have a different price
 }
 
 function editQty(listId, itemId, input) {
@@ -767,6 +1046,7 @@ function editQty(listId, itemId, input) {
   if (+input.value === itemQty(item)) return;
   item.qty = +input.value;
   scheduleSave();
+  refreshPrices(listId);
 }
 
 function deleteItem(listId, itemId) {
@@ -786,20 +1066,26 @@ function deleteItem(listId, itemId) {
   });
 }
 
-// Removes all ticked items; Undo puts them back where they were, keeping
-// anything added in the meantime.
+// Moves all ticked items to history (on a task list: removes them); Undo
+// puts them back where they were, keeping anything added in the meantime.
 function clearDone(listId) {
   const list = findList(listId);
   if (!list) return;
   const before = list.items.slice();
   const removed = before.filter(i => i.done);
   if (!removed.length) return;
+  const at = new Date().toISOString();
+  const entries = isShopping(list) ? removed.map(i => historyEntry(list, i, at)) : [];
   list.items = before.filter(i => !i.done);
+  list.history = [...(list.history || []), ...entries];
   scheduleSave();
   render();
-  showToast(`Cleared ${removed.length} done item${removed.length === 1 ? '' : 's'}`, () => {
+  const n = `${removed.length} done item${removed.length === 1 ? '' : 's'}`;
+  showToast(entries.length ? `Moved ${n} to history` : `Cleared ${n}`, () => {
     const l = findList(listId);
     if (!l) return;
+    const entryIds = new Set(entries.map(h => h.id));
+    l.history = (l.history || []).filter(h => !entryIds.has(h.id));
     const current = new Map(l.items.map(i => [i.id, i]));
     const removedIds = new Set(removed.map(i => i.id));
     const restored = before
@@ -1095,6 +1381,178 @@ function setupShareEvents() {
   });
 }
 
+// ─── PRICE & PHOTO SHEET ──────────────────────────────────────────────
+// Tapping the kr button (or photo) on an item opens its price and photo. A
+// new photo is uploaded as soon as it's picked, but only used once Save is
+// pressed; closing the sheet without saving deletes it again.
+function setProductNote(msg, isError) {
+  document.getElementById('productNote').textContent = (isError ? '❌ ' : '') + msg;
+}
+
+function openProductSheet(listId, itemId) {
+  const list = findList(listId);
+  const item = findItem(listId, itemId);
+  if (!list || !item) return;
+  const p = productFor(list, item.text);
+  productEdit = { listId, key: productKey(item.text), text: item.text, photo: p?.photo || null, uploads: [], done: false };
+  document.getElementById('productTitle').textContent = item.text;
+  document.getElementById('productText').textContent = `Used for every “${shorten(item.text, 24)}” on this list.`;
+  document.getElementById('productPriceInput').value = priceInputValue(p?.price ?? null);
+  setProductNote('');
+  renderProductPhoto();
+  openSheet('productOverlay', 'productPhotoBtn');
+}
+
+function renderProductPhoto() {
+  const edit = productEdit;
+  if (!edit) return;
+  document.getElementById('productPhoto').innerHTML = edit.photo
+    ? photoImg(edit.photo, `Photo of ${edit.text}`, 'product-img')
+    : '<span class="product-no-photo">No photo yet</span>';
+  document.getElementById('productPhotoBtn').textContent = edit.photo ? 'Change photo' : 'Add photo';
+  document.getElementById('productPhotoRemove').hidden = !edit.photo;
+  if (edit.photo) loadPhotoUrls([edit.photo]);
+}
+
+async function pickProductPhoto(input) {
+  const file = input.files && input.files[0];
+  input.value = '';
+  const edit = productEdit;
+  if (!file || !edit) return;
+  const btn = document.getElementById('productPhotoBtn');
+  btn.disabled = true;
+  setProductNote('Uploading photo…');
+  try {
+    const blob = await compressPhoto(file);
+    // Photos are stored under the list's id, so the list has to be in the
+    // cloud before its members can be given access.
+    if (!meta[edit.listId]?.at) await sync();
+    if (!meta[edit.listId]?.at) throw new Error('This list hasn’t reached the cloud yet. Try again when you’re online.');
+    const path = `${edit.listId}/${uid()}.jpg`;
+    const { error } = await supabaseClient.storage.from(PHOTO_BUCKET)
+      .upload(path, blob, { contentType: 'image/jpeg', cacheControl: '31536000' });
+    if (error) throw error;
+    photoUrls.set(path, { url: URL.createObjectURL(blob), exp: Infinity });
+    if (edit.done) { removePhotos([path]); return; } // sheet closed while uploading
+    edit.uploads.push(path);
+    edit.photo = path;
+    renderProductPhoto();
+    setProductNote('');
+  } catch (e) {
+    if (productEdit !== edit) return;
+    const msg = e.message || '';
+    setProductNote(/bucket not found/i.test(msg)
+      ? 'Photos aren’t set up yet: run the latest supabase-setup.sql in Supabase.'
+      : /fetch|network|abort/i.test(msg) ? 'Couldn’t upload the photo. Check your connection and try again.'
+      : msg || 'Couldn’t upload the photo', true);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function removeProductPhoto() {
+  if (!productEdit) return;
+  productEdit.photo = null;
+  renderProductPhoto();
+  document.getElementById('productPhotoBtn').focus();
+}
+
+function saveProduct() {
+  const edit = productEdit;
+  if (!edit) return;
+  const price = parsePrice(document.getElementById('productPriceInput').value);
+  if (price === undefined) { setProductNote('Enter a price like 12,50', true); return; }
+  const list = findList(edit.listId);
+  if (list) {
+    const products = { ...(list.products || {}) };
+    const old = products[edit.key];
+    if (price == null && !edit.photo) delete products[edit.key];
+    else products[edit.key] = { price, photo: edit.photo };
+    list.products = products;
+    edit.done = true;
+    removePhotos([...edit.uploads.filter(p => p !== edit.photo), old?.photo !== edit.photo && old?.photo]);
+    scheduleSave();
+    render();
+  }
+  closeSheet('productOverlay');
+}
+
+// Every way the sheet closes comes through here (see closeSheet).
+function endProductEdit() {
+  const edit = productEdit;
+  productEdit = null;
+  if (!edit || edit.done) return;
+  edit.done = true;
+  removePhotos(edit.uploads);
+}
+
+// ─── HISTORY SHEET ────────────────────────────────────────────────────
+// Ticked items, newest first, grouped by month and day with a total for each.
+const monthFmt = new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' });
+const dayFmt = new Intl.DateTimeFormat('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+
+function localDayKey(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+function dayLabel(d) {
+  const today = new Date();
+  const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+  const key = localDayKey(d);
+  return key === localDayKey(today) ? 'Today' : key === localDayKey(yesterday) ? 'Yesterday' : dayFmt.format(d);
+}
+
+function openHistory(listId) {
+  const list = findList(listId);
+  if (!list) return;
+  historyListId = listId;
+  document.getElementById('historyTitle').textContent = `History · ${shorten(list.name, 22)}`;
+  renderHistory();
+  openSheet('historyOverlay', 'historyDoneBtn');
+}
+
+function renderHistory() {
+  const el = document.getElementById('historyBody');
+  const list = findList(historyListId);
+  if (!list) { closeSheet('historyOverlay'); return; }
+  const entries = (list.history || [])
+    .map(h => ({ ...h, date: new Date(h.at) }))
+    .filter(h => !isNaN(h.date))
+    .sort((a, b) => b.date - a.date);
+  if (!entries.length) {
+    el.innerHTML = '<p class="history-empty">Nothing here yet. Items you tick off show up here, with what they cost.</p>';
+    return;
+  }
+  const months = [];
+  entries.forEach(h => {
+    const mKey = localDayKey(h.date).slice(0, 7);
+    let month = months[months.length - 1];
+    if (!month || month.key !== mKey) months.push(month = { key: mKey, date: h.date, days: [], total: 0 });
+    const dKey = localDayKey(h.date);
+    let day = month.days[month.days.length - 1];
+    if (!day || day.key !== dKey) month.days.push(day = { key: dKey, date: h.date, entries: [], total: 0 });
+    const cost = typeof h.price === 'number' ? h.price * itemQty(h) : 0;
+    day.entries.push(h);
+    day.total += cost;
+    month.total += cost;
+  });
+  el.innerHTML = months.map(m => `<section class="history-month">
+    <h4 class="history-month-head"><span>${escHtml(monthFmt.format(m.date))}</span><span>${formatPrice(m.total)}</span></h4>
+    ${m.days.map(d => `<div class="history-day">
+      <div class="history-day-head"><span>${escHtml(dayLabel(d.date))}</span><span>${formatPrice(d.total)}</span></div>
+      <ul class="history-items">${d.entries.map(h => {
+        const qty = itemQty(h);
+        const cost = typeof h.price === 'number' ? formatPrice(h.price * qty) : '–';
+        return `<li class="history-row" data-entry="${escHtml(h.id)}">
+          <span class="history-text">${escHtml(h.text)}${qty > 1 ? ` <span class="history-qty">× ${qty}</span>` : ''}</span>
+          <span class="history-cost">${cost}</span>
+          <button class="history-putback" data-action="put-back" aria-label="Put ${escHtml(h.text)} back on the list">Put back</button>
+        </li>`;
+      }).join('')}</ul>
+    </div>`).join('')}
+  </section>`).join('');
+}
+
 // ─── SHEETS ───────────────────────────────────────────────────────────
 // Bottom sheets ("New List", "Choose a new password") are dialogs: Escape
 // closes them, Tab stays inside, and focus goes back where it came from.
@@ -1110,6 +1568,8 @@ function closeSheet(id) {
   const overlay = document.getElementById(id);
   if (!overlay || !overlay.classList.contains('open')) return;
   overlay.classList.remove('open');
+  if (id === 'productOverlay') endProductEdit();
+  if (id === 'historyOverlay') historyListId = null;
   if (sheetReturnFocus && document.contains(sheetReturnFocus)) sheetReturnFocus.focus();
   sheetReturnFocus = null;
 }
@@ -1127,6 +1587,7 @@ function onSheetKeydown(e) {
 
 function openModal() {
   document.getElementById('modalInput').value = '';
+  document.querySelector('input[name="listType"][value="shopping"]').checked = true;
   openSheet('overlay', 'modalInput');
 }
 
@@ -1135,7 +1596,8 @@ function closeModal() { closeSheet('overlay'); }
 function confirmModal() {
   const name = document.getElementById('modalInput').value.trim();
   if (!name) return;
-  const l = {id:uid(), name, items:[]};
+  const type = document.querySelector('input[name="listType"]:checked')?.value === 'tasks' ? 'tasks' : 'shopping';
+  const l = { id: uid(), name, type, items: [], products: {}, history: [] };
   lists.push(l);
   activeId = l.id;
   scheduleSave();
@@ -1225,6 +1687,9 @@ function setupListEvents() {
       case 'delete-list': deleteList(listId); break;
       case 'share-list':  openShareSheet(listId); break;
       case 'clear-done':  clearDone(listId); break;
+      case 'change-type': changeListType(listId); break;
+      case 'product':     openProductSheet(listId, itemId); break;
+      case 'history':     openHistory(listId); break;
       case 'retry':       sync({ pull: true }); break;
     }
   });
@@ -1295,6 +1760,16 @@ function setupPageEvents() {
   onSubmit('authForm', submitAuth);
   onSubmit('newListForm', confirmModal);
   onSubmit('pwForm', saveNewPassword);
+  onSubmit('productForm', saveProduct);
+  onClick('productPhotoBtn', () => document.getElementById('productPhotoInput').click());
+  onClick('productPhotoRemove', removeProductPhoto);
+  document.getElementById('productPhotoInput').addEventListener('change', e => pickProductPhoto(e.target));
+  document.getElementById('historyBody').addEventListener('click', e => {
+    const btn = e.target.closest('[data-action="put-back"]');
+    if (!btn) return;
+    putBack(historyListId, btn.closest('[data-entry]').dataset.entry);
+    document.getElementById('historyDoneBtn').focus(); // the pressed row is gone
+  });
   onClick('togglePwBtn', togglePwVisibility);
   onClick('forgotBtn', sendPasswordReset);
   onClick('logoutBtn', logOut);

@@ -89,6 +89,19 @@
     <h3 id="modalTitle">New List</h3>
     <form id="newListForm" novalidate>
       <input class="modal-input" type="text" id="modalInput" placeholder="e.g. 🛒 Shopping, 📄 Documents…" maxlength="40" autocomplete="off" aria-label="List name">
+      <fieldset class="type-choice">
+        <legend class="sr-only">List type</legend>
+        <label class="type-option">
+          <input type="radio" name="listType" value="shopping" checked>
+          <span class="type-option-name">🛒 Shopping list</span>
+          <span class="type-option-desc">Prices, photos and history</span>
+        </label>
+        <label class="type-option">
+          <input type="radio" name="listType" value="tasks">
+          <span class="type-option-name">✅ Task list</span>
+          <span class="type-option-desc">A plain checklist</span>
+        </label>
+      </fieldset>
       <div class="modal-btns">
         <button type="button" class="btn-cancel" data-close-sheet>Cancel</button>
         <button type="submit" class="btn-create">Create</button>
@@ -132,6 +145,40 @@
     <ul class="member-list" id="memberList"></ul>
     <div class="modal-btns">
       <button type="button" class="btn-cancel" data-close-sheet>Done</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="productOverlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="productTitle">
+    <div class="modal-handle"></div>
+    <h3 id="productTitle">Price and photo</h3>
+    <p class="sheet-text" id="productText"></p>
+    <div class="product-photo" id="productPhoto"></div>
+    <input type="file" id="productPhotoInput" accept="image/*" hidden>
+    <div class="modal-btns product-photo-btns">
+      <button type="button" class="btn-cancel" id="productPhotoBtn">Add photo</button>
+      <button type="button" class="btn-cancel" id="productPhotoRemove" hidden>Remove photo</button>
+    </div>
+    <form id="productForm" novalidate>
+      <label class="lock-label" for="productPriceInput">Price per piece (kr)</label>
+      <input class="modal-input" type="text" id="productPriceInput" inputmode="decimal" placeholder="e.g. 12,50" autocomplete="off">
+      <p class="sheet-note product-note" id="productNote" aria-live="polite"></p>
+      <div class="modal-btns">
+        <button type="button" class="btn-cancel" data-close-sheet>Cancel</button>
+        <button type="submit" class="btn-create">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="overlay" id="historyOverlay">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="historyTitle">
+    <div class="modal-handle"></div>
+    <h3 id="historyTitle">History</h3>
+    <div id="historyBody"></div>
+    <div class="modal-btns">
+      <button type="button" class="btn-cancel" id="historyDoneBtn" data-close-sheet>Done</button>
     </div>
   </div>
 </div>
