@@ -89,6 +89,19 @@
     <h3 id="modalTitle">New List</h3>
     <form id="newListForm" novalidate>
       <input class="modal-input" type="text" id="modalInput" placeholder="e.g. 🛒 Shopping, 📄 Documents…" maxlength="40" autocomplete="off" aria-label="List name">
+      <fieldset class="type-choice">
+        <legend class="sr-only">List type</legend>
+        <label class="type-option">
+          <input type="radio" name="listType" value="shopping" checked>
+          <span class="type-option-name">🛒 Shopping list</span>
+          <span class="type-option-desc">Prices, photos and history</span>
+        </label>
+        <label class="type-option">
+          <input type="radio" name="listType" value="tasks">
+          <span class="type-option-name">✅ Task list</span>
+          <span class="type-option-desc">A plain checklist</span>
+        </label>
+      </fieldset>
       <div class="modal-btns">
         <button type="button" class="btn-cancel" data-close-sheet>Cancel</button>
         <button type="submit" class="btn-create">Create</button>

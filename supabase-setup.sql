@@ -8,8 +8,8 @@
 -- can be shared. `list_members` says who can see and edit each list, and
 -- invite links go through `list_invites` + accept_invite().
 --
--- Part 3 adds the Storage bucket for product photos, and keeps prices and
--- history when an older app version saves a list.
+-- Part 3 adds the Storage bucket for product photos, and keeps prices,
+-- history and the list type when an older app version saves a list.
 --
 -- Saves use optimistic locking: the app only updates a list where
 -- `updated_at` still equals the version it last saw, so two people or
@@ -307,8 +307,9 @@ create policy "product_photos_delete_member" on storage.objects
   for delete to authenticated
   using (bucket_id = 'product-photos' and public.is_list_member((storage.foldername(name))[1]));
 
--- Older app versions save a list as just { name, items }. Keep its prices
--- and history when such a save arrives, instead of wiping them.
+-- Older app versions save a list as just { name, items }. Keep its prices,
+-- history and type (shopping or task list) when such a save arrives,
+-- instead of wiping them.
 create or replace function public.keep_list_extras()
 returns trigger
 language plpgsql
@@ -319,6 +320,9 @@ begin
   end if;
   if not (new.data ? 'history') and old.data ? 'history' then
     new.data := new.data || jsonb_build_object('history', old.data -> 'history');
+  end if;
+  if not (new.data ? 'type') and old.data ? 'type' then
+    new.data := new.data || jsonb_build_object('type', old.data -> 'type');
   end if;
   return new;
 end;

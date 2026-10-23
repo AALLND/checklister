@@ -335,15 +335,17 @@ function checkSameUser(user) {
   if (currentUser !== user) throw new Error('Session changed during sync');
 }
 
-// `products` holds the price and photo for each item name (see productKey),
-// `history` the items ticked off (see buyItem). Lists saved before these
-// existed get them empty.
+// `type` is 'shopping' or 'tasks' (see LIST_TYPES), `products` holds the
+// price and photo for each item name (see productKey), `history` the items
+// ticked off (see buyItem). Lists saved before these existed are shopping
+// lists, with the others empty.
 function rowToList(row) {
   const d = row.data || {};
   const isObj = v => !!v && typeof v === 'object' && !Array.isArray(v);
   return {
     id: row.id,
     name: typeof d.name === 'string' ? d.name : 'List',
+    type: listType(d),
     items: Array.isArray(d.items) ? d.items : [],
     products: isObj(d.products) ? d.products : {},
     history: Array.isArray(d.history) ? d.history : []
@@ -401,7 +403,7 @@ async function pushToCloud(user) {
     let conflict = false;
     for (const list of lists.filter(isDirty)) {
       const snap = clone(list);
-      const data = { name: snap.name, items: snap.items, products: snap.products || {}, history: snap.history || [] };
+      const data = { name: snap.name, type: listType(snap), items: snap.items, products: snap.products || {}, history: snap.history || [] };
       const m = meta[snap.id];
       const now = new Date().toISOString();
       const res = !(m && m.at)
@@ -512,6 +514,7 @@ function mergeLists(base, local, remote) {
   return mergeById(base, local, remote, (b, l, r) => ({
     ...r,
     name: b && b.name === l.name ? r.name : l.name,
+    type: b && listType(b) === listType(l) ? listType(r) : listType(l),
     items: mergeById(b ? b.items : [], l.items, r.items, pick),
     products: mergeByKey(b && b.products || {}, l.products || {}, r.products || {}, pick),
     history: mergeById(b && b.history || [], l.history || [], r.history || [], pick)
@@ -570,6 +573,18 @@ function itemQty(item) { return Number.isInteger(item.qty) && item.qty >= 1 ? it
 function sortedItems(list) {
   return [...list.items.filter(i => !i.done), ...list.items.filter(i => i.done)];
 }
+
+// A shopping list has prices, photos, a total and a history of what was
+// bought; a task list is a plain checklist. Lists without a type (saved
+// before types existed) are shopping lists. Products and history are kept
+// on a task list, so changing it back brings them back.
+const LIST_TYPES = {
+  shopping: { icon: '🛒', name: 'Shopping list' },
+  tasks: { icon: '✅', name: 'Task list' }
+};
+function listType(list) { return list && list.type === 'tasks' ? 'tasks' : 'shopping'; }
+function isShopping(list) { return listType(list) === 'shopping'; }
+
 function listStats(list) {
   const total = list.items.length;
   const done = list.items.filter(i => i.done).length;
@@ -770,7 +785,7 @@ function renderContent() {
   el.innerHTML = getListHTML(list);
   renderedListId = list.id;
   justAddedId = null;
-  loadPhotoUrls(list.items.map(i => productFor(list, i.text)?.photo));
+  if (isShopping(list)) loadPhotoUrls(list.items.map(i => productFor(list, i.text)?.photo));
 }
 
 // The parts of a row and card that depend on prices, also refreshed in place
@@ -791,7 +806,13 @@ function priceLine(list, item) {
 }
 
 function summaryHTML(list) {
-  const { done } = listStats(list);
+  const { total, done } = listStats(list);
+  if (!isShopping(list)) {
+    return `<div class="list-summary">
+      <span class="summary-total">${total ? `${done} of ${total} done` : ''}</span>
+      <button class="clear-done-btn" data-action="clear-done" ${done ? '' : 'hidden'}>Clear done</button>
+    </div>`;
+  }
   const { sum, unpriced, priced } = listTotal(list);
   const totalText = priced
     ? `To buy: <strong>${formatPrice(sum)}</strong>${unpriced ? `<span class="summary-note">+ ${unpriced} without a price</span>` : ''}`
@@ -806,7 +827,7 @@ function summaryHTML(list) {
 function refreshPrices(listId) {
   const list = findList(listId);
   const card = document.querySelector(`.list-card[data-list="${CSS.escape(listId)}"]`);
-  if (!list || !card) return;
+  if (!list || !card || !isShopping(list)) return;
   card.querySelectorAll('.item-row').forEach(row => {
     const item = list.items.find(i => i.id === row.dataset.item);
     if (!item) return;
@@ -825,6 +846,9 @@ function getListHTML(list) {
   const leave = info?.mine === false;
   const isNewCard = list.id !== renderedListId;
   const lid = escHtml(list.id);
+  const shopping = isShopping(list);
+  const type = LIST_TYPES[listType(list)];
+  const otherType = LIST_TYPES[shopping ? 'tasks' : 'shopping'];
 
   const items = sortedItems(list);
   const firstDone = done && done < total ? items.findIndex(i => i.done) : -1;
@@ -840,14 +864,14 @@ function getListHTML(list) {
         <input type="checkbox" data-action="toggle" data-focus-key="cb:${iid}" aria-label="${escHtml(item.text)}" ${item.done ? 'checked' : ''}>
         <div class="cb-box" aria-hidden="true"><span class="tick">✓</span></div>
       </label>
-      ${productBtnHTML(list, item)}
+      ${shopping ? productBtnHTML(list, item) : ''}
       <div class="item-text-wrap">
         <input class="item-text${item.done ? ' done' : ''}" type="text" autocapitalize="sentences" value="${escHtml(item.text)}"
           data-field="item" data-focus-key="item:${iid}" aria-label="Item text">
-        <span class="item-price">${escHtml(priceLine(list, item))}</span>
+        ${shopping ? `<span class="item-price">${escHtml(priceLine(list, item))}</span>` : ''}
       </div>
-      <input class="item-qty${item.done ? ' done' : ''}" type="number" inputmode="numeric" min="1" max="${MAX_QTY}" value="${itemQty(item)}"
-        data-field="qty" data-focus-key="qty:${iid}" aria-label="Quantity of ${escHtml(item.text)}">
+      ${shopping ? `<input class="item-qty${item.done ? ' done' : ''}" type="number" inputmode="numeric" min="1" max="${MAX_QTY}" value="${itemQty(item)}"
+        data-field="qty" data-focus-key="qty:${iid}" aria-label="Quantity of ${escHtml(item.text)}">` : ''}
       <button class="item-del" data-action="delete-item" data-focus-key="del:${iid}" aria-label="Delete item">✕</button>
     </li>`;
   }).join('') : `<li class="empty-state">
@@ -859,6 +883,8 @@ function getListHTML(list) {
     <div class="card-header">
       <input class="card-title-input" type="text" value="${escHtml(list.name)}"
         data-field="title" data-focus-key="title:${lid}" aria-label="List name">
+      <button class="type-btn" data-action="change-type" data-focus-key="type:${lid}" title="Change to a ${otherType.name.toLowerCase()}"
+        aria-label="${type.name}. Change to a ${otherType.name.toLowerCase()}">${type.icon}</button>
       <button class="share-btn${shared ? ' is-shared' : ''}" data-action="share-list" title="Share list"
         aria-label="${shared ? `Shared with ${info.members - 1} other${info.members > 2 ? 's' : ''}. Share list` : 'Share list'}">👥${shared ? `<span class="share-count">${info.members}</span>` : ''}</button>
       <button class="del-list-btn" data-action="delete-list" title="${leave ? 'Leave list' : 'Delete list'}" aria-label="${leave ? 'Leave list' : 'Delete list'}">${leave ? 'Leave' : 'Delete'}</button>
@@ -915,16 +941,18 @@ function addItem(listId) {
   document.getElementById('newItemInput')?.focus();
 }
 
-// Ticking an item moves it to the list's history. Items ticked before
-// history existed (or by an older version of the app) stay below the done
-// line until they're unticked or moved to history.
+// On a shopping list, ticking an item moves it to the list's history. Items
+// ticked before history existed (or by an older version of the app, or while
+// it was a task list) stay below the done line until they're unticked or
+// moved to history. On a task list, ticked items stay below the done line.
 function toggleItem(listId, itemId, checked) {
-  if (checked) { buyItem(listId, itemId); return; }
   const list = findList(listId);
+  if (checked && isShopping(list)) { buyItem(listId, itemId); return; }
   const item = findItem(listId, itemId);
   if (!item) return;
-  item.done = false;
-  // An unticked item goes back to the end of the open items.
+  item.done = checked;
+  // A ticked item goes to the top of the done ones, an unticked one to the
+  // end of the open ones.
   const rest = sortedItems(list).filter(i => i !== item);
   const at = rest.findIndex(i => i.done);
   rest.splice(at < 0 ? rest.length : at, 0, item);
@@ -932,6 +960,24 @@ function toggleItem(listId, itemId, checked) {
   justAddedId = item.id; // slides it in at its new place
   scheduleSave();
   render();
+}
+
+// Changing the type keeps everything: prices, photos and history are only
+// hidden on a task list.
+function changeListType(listId) {
+  const list = findList(listId);
+  if (!list) return;
+  const old = listType(list);
+  list.type = old === 'shopping' ? 'tasks' : 'shopping';
+  scheduleSave();
+  render();
+  showToast(`Changed to a ${LIST_TYPES[list.type].name.toLowerCase()}`, () => {
+    const l = findList(listId);
+    if (!l) return;
+    l.type = old;
+    scheduleSave();
+    render();
+  });
 }
 
 // A history entry keeps the price and quantity at the time it was bought.
@@ -1020,8 +1066,8 @@ function deleteItem(listId, itemId) {
   });
 }
 
-// Moves all ticked items to history; Undo puts them back where they were,
-// keeping anything added in the meantime.
+// Moves all ticked items to history (on a task list: removes them); Undo
+// puts them back where they were, keeping anything added in the meantime.
 function clearDone(listId) {
   const list = findList(listId);
   if (!list) return;
@@ -1029,12 +1075,13 @@ function clearDone(listId) {
   const removed = before.filter(i => i.done);
   if (!removed.length) return;
   const at = new Date().toISOString();
-  const entries = removed.map(i => historyEntry(list, i, at));
+  const entries = isShopping(list) ? removed.map(i => historyEntry(list, i, at)) : [];
   list.items = before.filter(i => !i.done);
   list.history = [...(list.history || []), ...entries];
   scheduleSave();
   render();
-  showToast(`Moved ${removed.length} done item${removed.length === 1 ? '' : 's'} to history`, () => {
+  const n = `${removed.length} done item${removed.length === 1 ? '' : 's'}`;
+  showToast(entries.length ? `Moved ${n} to history` : `Cleared ${n}`, () => {
     const l = findList(listId);
     if (!l) return;
     const entryIds = new Set(entries.map(h => h.id));
@@ -1540,6 +1587,7 @@ function onSheetKeydown(e) {
 
 function openModal() {
   document.getElementById('modalInput').value = '';
+  document.querySelector('input[name="listType"][value="shopping"]').checked = true;
   openSheet('overlay', 'modalInput');
 }
 
@@ -1548,7 +1596,8 @@ function closeModal() { closeSheet('overlay'); }
 function confirmModal() {
   const name = document.getElementById('modalInput').value.trim();
   if (!name) return;
-  const l = { id: uid(), name, items: [], products: {}, history: [] };
+  const type = document.querySelector('input[name="listType"]:checked')?.value === 'tasks' ? 'tasks' : 'shopping';
+  const l = { id: uid(), name, type, items: [], products: {}, history: [] };
   lists.push(l);
   activeId = l.id;
   scheduleSave();
@@ -1638,6 +1687,7 @@ function setupListEvents() {
       case 'delete-list': deleteList(listId); break;
       case 'share-list':  openShareSheet(listId); break;
       case 'clear-done':  clearDone(listId); break;
+      case 'change-type': changeListType(listId); break;
       case 'product':     openProductSheet(listId, itemId); break;
       case 'history':     openHistory(listId); break;
       case 'retry':       sync({ pull: true }); break;
